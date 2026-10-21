@@ -1,0 +1,44 @@
+Requirements: Business Problem
+Our company ACME Inc. manages office facilities and workplace technology across multiple buildings, but issue reporting and resolution are fragmented across emails, chats, and manual trackers. Employees cannot easily report problems or track progress, facility administrators lack end-to-end visibility, and engineers struggle to manage assignments and updates consistently. This leads to delayed resolutions, duplicate tickets, poor communication, and reduced workplace productivity.
+
+We need answers to critical questions like:
+
+What incidents are currently open, and what is their status?
+Which buildings, floors, and seats have the highest number of recurring issues?
+How quickly are incidents being acknowledged, assigned, and resolved?
+Which engineers are available and how is work distributed across them?
+What are the most common facility and technology issue categories?
+Which incidents are escalated or blocked and why?
+How effectively are employees being informed about ticket progress and outcomes?
+Requirements: Technical Solution
+We are building a centralized facility incident management platform that enables ACME employees to report and track facility and workplace technology issues through a self-service workflow. The initial scope should not require integrations with external systems and should focus on a self-service system with clear role-based responsibilities and transparent communication.
+
+The technical solution involves developing a stand-alone web application using modern technologies. The application must support three personas:
+
+Employee: register using a acme.inc email address, create and track incidents, add notes to open incidents, and request or manage incident priority/escalation based on the product design.
+Facility Admin: define facilities (buildings, floors, seats), create engineer profiles, assign tickets, and oversee the full ticket lifecycle.
+Engineer: manage assigned tickets, keep status updated, and communicate with ticket creators through incident notes.
+Minimum viable product (MVP) capabilities should include:
+
+User authentication and authorization
+Role-based access control
+CRUD operations for incidents, facilities (building/floor/seat), engineer profiles, and ticket notes
+Incident workflow with statuses such as Open, In Progress, Blocked, Resolved, and Closed
+Visual representation of the ticket workflow
+Basic dashboard/reporting per persona (for example, ticket counts by status, priority, and assignee)
+Search and filter functionality
+Responsive design for mobile and desktop usage
+Requirements: Technology Stack
+The following technologies are required to build the application:
+
+Frontend: HTML, CSS, React.js with React Responsive and Material UI Components
+Backend: Python
+Database: PostgreSQL
+The following technologies are good to know, as they are used to manage and deploy code:
+
+Version Control: Git, GitHub
+Infrastructure: Terraform
+Deployment Mode: Shell Scripts
+Deployment Target: AWS Serverless (e.g. S3, CloudFront, Lambda, RDS)
+Expectations: Value-Based Outcomes
+By the end of the workshop, participants will have developed a functional web application that meets the requirements outlined above. The application will be deployed to a cloud environment and accessible via a web browser. Participants will also gain hands-on experience with modern web development technologies and best practices.

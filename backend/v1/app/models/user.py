@@ -4,8 +4,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 from enum import Enum
 
 class UserRole(str, Enum):
-    ADMIN = "admin"
-    USER = "user"
+    FACILITY_ADMIN = "Facility Admin"
+    ENGINEER = "Engineer"
+    EMPLOYEE = "Employee"
 
 class User(Base):
     __tablename__ = "users"
