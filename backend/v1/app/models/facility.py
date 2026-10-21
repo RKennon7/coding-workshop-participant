@@ -1,5 +1,5 @@
-from base import Base
-from sqlalchemy import Column, Integer, String
+from app.models.base import Base
+from sqlalchemy import String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 class Facility(Base):

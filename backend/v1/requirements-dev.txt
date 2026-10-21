@@ -16,6 +16,6 @@ PyJWT
 pytest-asyncio
 python-multipart
 PyYAML
-SQLAlchemy
+SQLAlchemy[asyncio]
 watchfiles
 websockets
