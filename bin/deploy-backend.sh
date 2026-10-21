@@ -22,6 +22,9 @@ if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
     echo "  - terraform installed"
     echo "  - ENVIRONMENT.config file (auto-created for AWS)"
     echo ""
+    echo "Environment:"
+    echo "  SKIP_DB_INIT=true  Skip creating tables / seeding data after deploy"
+    echo ""
     echo "Examples:"
     echo "  $0              # Deploy to AWS"
     echo "  $0 aws          # Deploy to AWS"
@@ -98,6 +101,13 @@ fi
 # Apply Terraform configuration automatically
 terraform apply -auto-approve
 echo "INFO: Infrastructure deployment complete!"
+
+# Create missing tables and seed data (idempotent, so it runs on every deploy)
+if [ "${SKIP_DB_INIT:-false}" != "true" ]; then
+    $SCRIPT_DIR/init-database.sh "$ENVIRONMENT"
+else
+    echo "INFO: SKIP_DB_INIT=true, skipping database initialization"
+fi
 
 # Display API endpoint
 if [ -n "$API_BASE_URL" ]; then

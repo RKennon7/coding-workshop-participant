@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from mangum import Mangum
 from sqlalchemy.exc import IntegrityError
 
-from app.routers import auth
+from app.routers import auth, engineers, facilities, incidents, users
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -28,6 +28,11 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
+app.include_router(users.router)
+for router in facilities.routers:
+    app.include_router(router)
+app.include_router(engineers.router)
+app.include_router(incidents.router)
 
 #A simple health check endpoint to verify that the API is running.
 @app.get("/health", tags=["health"])
@@ -38,7 +43,7 @@ async def health_check() -> dict[str, str]:
 @app.exception_handler(IntegrityError)
 async def integrity_error_handler(request: Request, exc: IntegrityError) -> JSONResponse:
     logger.warning("Integrity error on %s %s: %s", request.method, request.url.path, exc.orig)
-    return JSONResponse(status_code=409, content={"detail": "A database constraint was violated (e.g. a duplicate value)."})
+    return JSONResponse(status_code=409, content={"detail": "A database constraint was violated (e.g. a duplicate value, or the record is still in use elsewhere)."})
 
 
 @app.exception_handler(Exception)

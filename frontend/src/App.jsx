@@ -1,29 +1,20 @@
-import { Typography } from '@mui/material';
-
+import { useState } from 'react';
 import LoginForm from './components/auth/LoginForm';
-import AppHeader from './components/layout/AppHeader';
+import RegisterForm from './components/auth/RegisterForm';
+import MainLayout from './components/layout/MainLayout';
 import { AuthProvider, useAuth } from './context/AuthContext';
-
-function Dashboard(){
-  return (
-    <>
-      <Typography>hello</Typography>
-    </>
-  )
-
-}
 
 function AppContent() {
   const {isAuthenticated} = useAuth();
-  if (!isAuthenticated) {
-    return <LoginForm />;
+  // logged out users see the login screen, or first-time account setup
+  const [showRegister, setShowRegister] = useState(false);
+
+  if (isAuthenticated) {
+    return <MainLayout />;
   }
-  return (
-    <>
-      <AppHeader />
-      <Dashboard />
-    </>
-  );
+  return showRegister
+    ? <RegisterForm onShowLogin={() => setShowRegister(false)} />
+    : <LoginForm onShowRegister={() => setShowRegister(true)} />;
 }
 
 function App() {

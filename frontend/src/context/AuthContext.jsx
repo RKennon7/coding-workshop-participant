@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import apiClient, { setUnauthorizedHandler } from "../api/client";
+import { registerAccount } from "../services/index.js";
 
 /**
  * Global auth state using React's context API
@@ -43,8 +44,16 @@ export function AuthProvider({children}) {
 
     // decode JWT into user obj and cache results to prevent re-decoding token
     // str on every re-render. only runs when token changes
+    // payload: {sub: username, uid: user id, role, exp}
     const user = useMemo(() => (token ? decodeToken(token): null), [token]);
 
+    const storeToken = (accessToken) => {
+        localStorage.setItem('accessToken', accessToken);
+        setSessionExpired(false);
+        setToken(accessToken);
+    };
+
+    // username can be either the username or the email
     const login = async (username, password) => {
         const formData = new URLSearchParams();
         formData.append('username', username);
@@ -53,10 +62,14 @@ export function AuthProvider({children}) {
         const response = await apiClient.post('/auth/token', formData, {
             headers: {'Content-Type': 'application/x-www-form-urlencoded'},
         });
-        localStorage.setItem('accessToken', response.data.access_token);
-        setSessionExpired(false);
-        setToken(response.data.access_token);
+        storeToken(response.data.access_token);
     }
+
+    // claims the account an admin created for this email; the backend returns a token, so this also logs in
+    const register = async (email, password) => {
+        const data = await registerAccount({email, password});
+        storeToken(data.access_token);
+    };
 
     const logout = useCallback(() => {
         localStorage.removeItem('accessToken');
@@ -86,7 +99,7 @@ export function AuthProvider({children}) {
 
     // bundles auth state variables and action functions into a single object to define
     // the exact interface exposed to components that are consuming this context
-    const value = {token, user, isAuthenticated: Boolean(token), sessionExpired, login, logout};
+    const value = {token, user, isAuthenticated: Boolean(token), sessionExpired, login, register, logout};
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

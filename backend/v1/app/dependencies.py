@@ -3,7 +3,6 @@ from collections.abc import AsyncGenerator
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
@@ -35,17 +34,17 @@ async def get_current_user(
     )
     try:
         payload = decode_access_token(token)
-        # sub refers to subject of the token
-        username = payload.get("sub")
-        if username is None:
+        # look the user up by id (uid), not by username (sub): usernames can be changed and then reused,
+        # which would let an old token log in as whoever has that username now
+        user_id = payload.get("uid")
+        if not isinstance(user_id, int):
             raise credentials_exception
     except jwt.InvalidTokenError:
         raise credentials_exception
 
-    # query db for user with extracted username
-    result = await db.execute(select(User).where(User.username == username))
-    user = result.scalar_one_or_none()
-    if user is None:
+    user = await db.get(User, user_id)
+    # deactivated users are locked out even if they still hold an unexpired token
+    if user is None or not user.is_active:
         raise credentials_exception
     return user
 
@@ -61,3 +60,6 @@ def require_role(*allowed_roles: UserRole):
             )
         return current_user
     return role_checker
+
+# shorthand for the most common check
+require_admin = require_role(UserRole.FACILITY_ADMIN)

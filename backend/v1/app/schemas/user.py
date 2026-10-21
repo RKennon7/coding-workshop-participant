@@ -1,18 +1,39 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 from app.models import UserRole
+from app.schemas.common import AcmeEmail, NewPassword, ORMModel
 
 class UserBase(BaseModel):
     username: str = Field(min_length=3, max_length=50)
+    email: AcmeEmail
+    role: UserRole = UserRole.EMPLOYEE
+
+# admin creates a user. leave password out to invite them: they set their own via /auth/register
+class UserCreate(UserBase):
+    password: NewPassword | None = None
+
+class UserUpdate(BaseModel):
+    username: str | None = Field(default=None, min_length=3, max_length=50)
+    email: AcmeEmail | None = None
+    role: UserRole | None = None
+    is_active: bool | None = None
+
+class UserRead(ORMModel):
+    id: int
+    username: str
     email: str
     role: UserRole
+    is_active: bool
+    is_registered: bool  # False = invited but hasn't set a password yet
 
-class UserCreate(UserBase):
-    password: str = Field(min_length=8)
+# a new user claims the account an admin created for their email
+class RegisterRequest(BaseModel):
+    email: AcmeEmail
+    password: NewPassword
 
-class UserRead(UserBase):
-    id: int
-    model_config = ConfigDict(from_attributes=True)
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: NewPassword
 
 class Token(BaseModel):
     access_token: str

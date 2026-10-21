@@ -21,6 +21,7 @@ from app.models import (
     UserRole,
 )
 from app.security import hash_password
+from scripts.seed_users import DEFAULT_PASSWORD
 
 # Seeds a small but realistic dataset for dashboards/reporting. Safe to re-run: it skips if the
 # sample facility already exists, and reuses any users already created by seed_users.py.
@@ -28,7 +29,6 @@ from app.security import hash_password
 
 rng = random.Random(42)  # fixed seed so every run produces the same dataset
 NOW = datetime.now(timezone.utc)
-DEFAULT_PASSWORD = "password123"
 
 FACILITY_NAME = "ACME HQ Campus"
 BUILDINGS = {"North Tower": ("NT", 3), "South Annex": ("SA", 2)}  # name -> (seat prefix, floor count)
@@ -336,13 +336,13 @@ def build_incident(status: IncidentStatus, admin: User, engineers, employees, lo
     )
 
 
-async def seed_sample_data() -> None:
+async def seed_sample_data(password_hash: str | None = None) -> None:
     async with AsyncSessionLocal() as session:
         if await session.scalar(select(Facility).where(Facility.name == FACILITY_NAME)):
             print(f"'{FACILITY_NAME}' already exists, skipping sample data.")
             return
 
-        password_hash = hash_password(DEFAULT_PASSWORD)
+        password_hash = password_hash or hash_password(DEFAULT_PASSWORD)
         admin = await get_or_create_user(session, *ADMINS[0], UserRole.FACILITY_ADMIN, password_hash)
         engineer_users = [
             await get_or_create_user(session, username, email, UserRole.ENGINEER, password_hash)

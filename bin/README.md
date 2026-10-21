@@ -59,6 +59,27 @@ To deploy your frontend to AWS:
 ./bin/deploy-backend.sh [aws|local]
 ```
 
+After `terraform apply`, this also runs `init-database.sh` (set `SKIP_DB_INIT=true` to skip it).
+
+### `init-database.sh`
+
+Creates any missing Postgres tables and seeds test users plus sample incident data, by invoking the deployed backend Lambda with `{"action": "init_db"}`. It runs inside the Lambda because RDS is only reachable from within the VPC.
+
+**When to use**:
+
+* Runs automatically on every `deploy-backend.sh`
+* Manually, to re-seed after wiping the database
+
+**Idempotent**: existing tables are left unchanged, existing users are reused, and the sample data is skipped if it's already there. A Postgres advisory lock means two runs at the same time can't both seed. Note that it won't add new *columns* to tables that already exist; that needs a migration tool such as Alembic.
+
+**Usage**:
+
+```sh
+./bin/init-database.sh [aws|local] [--no-sample-data]
+```
+
+To run it against a local Postgres directly instead: `cd backend/v1 && python -m scripts.init_db`
+
 ### `deploy-frontend.sh`
 
 Builds and deploys the React frontend to AWS.
