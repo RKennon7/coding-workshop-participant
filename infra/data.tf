@@ -2,10 +2,12 @@ data "aws_region" "this" {}
 data "aws_partition" "this" {}
 data "aws_caller_identity" "this" {}
 
+# an explicit aws_vpc_id wins; otherwise use the VPC named after the project (the shared workshop VPC),
+# and if there isn't exactly one of those, fall back to the account's default VPC below
 data "aws_vpcs" "this" {
   filter {
-    name   = "vpc-id"
-    values = [try(trimspace(var.aws_vpc_id), "") != "" ? trimspace(var.aws_vpc_id) : "*"]
+    name   = try(trimspace(var.aws_vpc_id), "") != "" ? "vpc-id" : "tag:Name"
+    values = [try(trimspace(var.aws_vpc_id), "") != "" ? trimspace(var.aws_vpc_id) : var.aws_project]
   }
 }
 
