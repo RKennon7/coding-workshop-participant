@@ -1,3 +1,6 @@
+// app shell for logged-in users (App.jsx renders it once there's a token): header, tab menu and the active page.
+// there's no URL router: navigation is component state, and pages move between tabs through
+// NavigationContext's navigate(id, params). which tabs a role sees comes from NAV_SECTIONS in navigation.js.
 import { useCallback, useMemo, useState } from 'react';
 import { Alert, Box, Container, Tab, Tabs } from '@mui/material';
 import AppHeader from './AppHeader.jsx';
@@ -7,12 +10,18 @@ import { usePermissions } from '../../hooks/usePermissions.js';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { ROLES } from '../../auth/permissions.js';
 
-{/** header + tab menu + the active section's page, limited to sections the user can see */}
+{/**
+ * Header + tab menu + the active section's page, limited to sections the user can see. Takes no props.
+ * provides NavigationContext ({navigate}) to every page, and passes the navigation params to the
+ * active page as its `params` prop (e.g. {incidentId} or filters when the dashboard links to Incidents).
+ */}
 function MainLayout() {
     const {can, role} = usePermissions();
     const {profile} = useAuth();
-    // e.g. their facility was deleted: they see no locations until an admin reassigns them
+    // e.g. their facility was deleted: they see no locations until an admin reassigns them.
+    // admins don't need one, they work across all campuses. profile is undefined while loading, so no flash
     const needsFacility = role !== ROLES.FACILITY_ADMIN && profile && profile.facility_id == null;
+    // hiding a tab is only UX: the backend still rejects the API calls behind it for roles without access
     const sections = NAV_SECTIONS.filter((section) => can(section.permission));
 
     // params are handed to the page (e.g. filters from a dashboard click). visit counts every navigation,
@@ -22,6 +31,7 @@ function MainLayout() {
         setNav((prev) => ({id, params, visit: prev.visit + 1}));
         window.scrollTo({top: 0});
     }, []);
+    // stable context value so consumers don't re-render on every layout render
     const navigation = useMemo(() => ({navigate}), [navigate]);
 
     // fall back to the first tab if the active one isn't available to this user
@@ -55,6 +65,7 @@ function MainLayout() {
                             Please contact a Facility Admin to be assigned to one.
                         </Alert>
                     )}
+                    {/* params only belong to the tab they were sent to, not to the fallback tab */}
                     {ActivePage && <ActivePage key={nav.visit} params={active.id === nav.id ? nav.params : null} />}
                 </Container>
             </Box>

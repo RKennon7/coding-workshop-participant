@@ -1,3 +1,9 @@
+/**
+ * The Incidents tab: the paged ticket grid, filter bar and create/edit form, built on the generic
+ * ResourceView (components/common/ResourceView.jsx) over /incidents.
+ * Everyone sees this tab; the backend decides which tickets come back (admins: all, engineers: assigned
+ * to or reported by them, employees: reported by them; see _visible_to in backend/v1/app/routers/incidents.py). Field-level edit rules come from auth/incidentRules.js.
+ */
 import { useMemo, useState } from 'react';
 import { useMediaQuery } from '@mui/material';
 import ResourceView from '../components/common/ResourceView.jsx';
@@ -32,7 +38,7 @@ function withCurrentAssignee(options, incident) {
 }
 
 {/**
- * params (from the dashboard, via MainLayout):
+ * Incidents page. params (from the dashboard, via MainLayout / NavigationContext):
  *  - filters: initial filter values, see IncidentFilters
  *  - incidentId: open that incident's form straight away
  *  - create: open the "new incident" form straight away
@@ -45,8 +51,10 @@ function IncidentsPage({params}) {
     const [filters, setFilters] = useState(() => params?.filters
         ?? (isAdmin && profile?.facility_id ? {facility_id: [profile.facility_id]} : {}));
     const compact = useMediaQuery((theme) => theme.breakpoints.down('md'), {noSsr: true});
+    // filter values -> query params for GET /incidents (unset filters are dropped)
     const listParams = useMemo(() => toListParams(filters), [filters]);
 
+    // only admins filter by facility: everyone else is limited to their own campus by the backend
     const facilityOptions = useOptions(facilitiesService, (f) => f.name, {enabled: isAdmin});
     const buildingOptions = useOptions(buildingsService, (b) => b.name);
     // the filter bar only offers buildings in the picked facilities
@@ -79,6 +87,7 @@ function IncidentsPage({params}) {
                 renderCell: ({value}) => <EnumChip value={value} colors={PRIORITY_COLORS} />,
             },
             {field: 'category', headerName: 'Category', flex: 1, minWidth: 120, type: 'singleSelect', valueOptions: INCIDENT_CATEGORIES},
+            // rows embed reporter/assignee/building objects; the label maps are a fallback for ids only
             {field: 'reporter_id', headerName: 'Reporter', flex: 1, minWidth: 105, valueGetter: (value, row) => row.reporter?.username ?? value},
             {
                 field: 'building_id', headerName: 'Building', flex: 1, minWidth: 110,
@@ -161,6 +170,7 @@ function IncidentsPage({params}) {
             service={incidentsService}
             columns={columns}
             fields={fields}
+            // update: the default for fields without editableBy (all incident fields have a row rule above)
             permissions={{create: P.INCIDENTS_CREATE, update: P.INCIDENTS_UPDATE, delete: P.INCIDENTS_DELETE}}
             getRowLabel={(row) => `#${row.id} ${row.title}`}
             listParams={listParams}
@@ -179,6 +189,7 @@ function IncidentsPage({params}) {
                     showAssignee={can(P.ENGINEERS_VIEW)}
                 />
             )}
+            // shown under the edit form: status audit trail, then the notes thread (read-only once closed)
             renderFormExtras={(row) => (
                 <>
                     <IncidentHistory incidentId={row.id} currentStatus={row.status} />

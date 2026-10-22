@@ -1,8 +1,14 @@
+"""Building model: a building within a facility (campus)."""
 from app.models.base import Base
 from sqlalchemy import ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 class Building(Base):
+    """A building on a campus (table `buildings`).
+
+    Belongs to one Facility and has many Floors. Names are unique per facility, not globally.
+    Every Incident references a building, which is also how an incident's facility is determined.
+    """
     __tablename__ = "buildings"
     __table_args__ = (UniqueConstraint("facility_id", "name"),)
 

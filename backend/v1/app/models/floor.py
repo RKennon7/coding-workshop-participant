@@ -1,8 +1,13 @@
+"""Floor model: a floor within a building."""
 from app.models.base import Base
 from sqlalchemy import ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 class Floor(Base):
+    """A floor of a building (table `floors`), e.g. "Floor 3".
+
+    Belongs to one Building and has many Seats. Names are unique per building.
+    """
     __tablename__ = "floors"
     __table_args__ = (UniqueConstraint("building_id", "name"),)
 

@@ -1,3 +1,9 @@
+"""Seed one test account per role (admin / engineer / employee), all @acme.inc.
+
+Called by scripts/init_db.py on every deployment; runnable alone with python -m scripts.seed_users
+from backend/v1. The accounts get a facility and the engineer gets a profile only when
+seed_sample_data.py also runs (it reuses these same emails).
+"""
 import asyncio
 
 from sqlalchemy import select
@@ -6,6 +12,7 @@ from app.database import AsyncSessionLocal
 from app.models import User, UserRole
 from app.security import hash_password
 
+# (username, email, role)
 TEST_USERS = [
     ("admin", "testadmin@acme.inc", UserRole.FACILITY_ADMIN),
     ("engineer", "testengineer@acme.inc", UserRole.ENGINEER),
@@ -17,6 +24,7 @@ TEST_USERS = [
 DEFAULT_PASSWORD = "password123"
 
 # Safe to re-run: only creates test users whose email doesn't exist yet
+# password_hash: a pre-computed hash (init_db passes one so every seeded account shares it); defaults to DEFAULT_PASSWORD
 async def seed_users(password_hash: str | None = None) -> None:
     password_hash = password_hash or hash_password(DEFAULT_PASSWORD)
     async with AsyncSessionLocal() as session:

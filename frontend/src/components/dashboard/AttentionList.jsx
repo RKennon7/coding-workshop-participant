@@ -1,3 +1,7 @@
+// "Needs attention": flagged tickets with the reason each one needs someone, most urgent first.
+// answers "which incidents are escalated, blocked, overdue or forgotten, and why?". unlike the other cards it
+// fetches its own data, a page at a time, from GET /analytics/attention (AttentionPage in backend/v1/app/schemas/analytics.py).
+// shown on the Facility Admin and Engineer dashboards
 import { useEffect, useState } from 'react';
 import { Alert, Avatar, Box, Chip, LinearProgress, List, ListItemAvatar, ListItemButton, Pagination, Stack, Typography } from '@mui/material';
 import { alpha } from '@mui/material/styles';
@@ -11,11 +15,18 @@ import { getErrorMessage } from '../../hooks/useResource.js';
 
 const PAGE_SIZE = 5;
 
+/** one secondary flag as a small outlined chip: icon + label, never color alone */
 function FlagChip({kind}) {
     const {label, color, icon: Icon} = FLAG_META[kind];
     return <Chip size="small" variant="outlined" color={color} icon={<Icon />} label={label} />;
 }
 
+/**
+ * One flagged ticket row.
+ *  - ticket: a TicketSummary from the API, with at least one flag (the backend only returns flagged tickets)
+ *  - showAssignee: admins see who it's assigned to; engineers (whose ticket it is) see the reporter instead
+ *  - showFacility: prefix the location with the campus when several are on screen
+ */
 function AttentionItem({ticket, onOpen, showAssignee, showFacility}) {
     // flags arrive most urgent first: the first one picks the icon and gives the headline reason
     const [primary, ...others] = ticket.flags;
@@ -69,16 +80,19 @@ function AttentionItem({ticket, onOpen, showAssignee, showFacility}) {
  */}
 function AttentionList({scope, refreshKey, filter, onFilterChange, onOpen, showAssignee = true, showFacility = false, pageSize = PAGE_SIZE}) {
     // back to the first page whenever the filter or the dashboard's scope changes
+    // the page is stored together with the key it belongs to, so a new key reads as page 0 without an extra effect
     const listKey = JSON.stringify({scope, filter});
     const [pageState, setPageState] = useState({listKey, page: 0});
     const page = pageState.listKey === listKey ? pageState.page : 0;
 
     const requestKey = JSON.stringify({listKey, page, refreshKey});
+    // result remembers which request it answers: loading is derived from that, and the previous page stays visible meanwhile
     const [result, setResult] = useState({key: null, data: null, error: null});
     useEffect(() => {
         let cancelled = false;
         fetchAttention({...scope, kind: filter ?? undefined, limit: pageSize, offset: page * pageSize})
             .then((data) => !cancelled && setResult({key: requestKey, data, error: null}))
+            // on error keep the last page on screen and show the message above it
             .catch((err) => !cancelled && setResult((prev) => ({...prev, key: requestKey, error: getErrorMessage(err)})));
         return () => {
             cancelled = true;
@@ -89,6 +103,7 @@ function AttentionList({scope, refreshKey, filter, onFilterChange, onOpen, showA
 
     const {data, error} = result;
     const loading = result.key !== requestKey;
+    // counts cover every flagged ticket in scope (for the subtitle and chips); data.total only those matching the filter (for paging)
     const flagged = data?.counts.total ?? 0;
     const pages = data ? Math.ceil(data.total / pageSize) : 0;
     const first = page * pageSize + 1;
@@ -110,6 +125,7 @@ function AttentionList({scope, refreshKey, filter, onFilterChange, onOpen, showA
                     />
                     {Object.entries(FLAG_META).filter(([kind]) => data.counts.by_kind[kind]).map(([kind, {label, icon: Icon}]) => (
                         <Chip
+                            // one chip per flag kind that has tickets, in urgency order. clicking the selected chip clears the filter
                             key={kind}
                             size="small"
                             icon={<Icon />}

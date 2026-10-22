@@ -1,3 +1,8 @@
+/**
+ * The Engineers tab: engineer profiles (specialty, availability, max open tickets) used for
+ * assignment and workload balancing. Admins manage profiles; engineers can view the roster and
+ * update their own phone + availability (backend: ENGINEER_SELF_FIELDS in routers/engineers.py).
+ */
 import { useMemo } from 'react';
 import ResourceView from '../components/common/ResourceView.jsx';
 import { PERMISSIONS, ROLES } from '../auth/permissions.js';
@@ -7,6 +12,7 @@ import { toLabelMap, useOptions } from '../hooks/useResource.js';
 import { engineersService, facilitiesService, usersService } from '../services/index.js';
 import { INCIDENT_CATEGORIES, toOptions } from '../constants/enums.js';
 
+/** Engineers grid + form on top of ResourceView. Visible to roles with engineers:view. */
 function EngineersPage() {
     const {user} = useAuth();
     const {can} = usePermissions();
@@ -55,6 +61,7 @@ function EngineersPage() {
             service={engineersService}
             columns={columns}
             fields={fields}
+            // engineers lack ENGINEERS_MANAGE, but the editableBy row rules above still let them edit their own row
             permissions={{
                 create: PERMISSIONS.ENGINEERS_MANAGE,
                 update: PERMISSIONS.ENGINEERS_MANAGE,

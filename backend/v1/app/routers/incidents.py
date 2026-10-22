@@ -1,3 +1,15 @@
+"""
+Incidents (tickets), their status history, and their notes.
+
+URL prefix: /incidents, notes under /incidents/{incident_id}/notes. Every endpoint needs a logged in
+user; anyone may report an incident. Deleting an incident is Facility Admin only.
+
+Row-level visibility (_visible_to): admins see every ticket, engineers the tickets assigned to or
+reported by them, employees only the ones they reported. Tickets outside that are a 404, never 403.
+What a caller may change depends on how they relate to the ticket (Actor + EDITABLE_FIELDS), and
+status changes follow ALLOWED_TRANSITIONS. Both are mirrored for the UI in
+frontend/src/auth/incidentRules.js -- keep the two in sync.
+"""
 from datetime import datetime, timezone
 from enum import Enum
 
@@ -36,7 +48,8 @@ router = APIRouter(prefix="/incidents", tags=["incidents"])
 
 S = IncidentStatus
 
-# the ticket workflow: which statuses each status can move to (for every role)
+# the ticket workflow: which statuses each status can move to (for every role). per-actor limits on top
+# of this live in _change_status. mirrored in frontend/src/auth/incidentRules.js
 ALLOWED_TRANSITIONS: dict[IncidentStatus, set[IncidentStatus]] = {
     S.OPEN: {S.IN_PROGRESS, S.BLOCKED, S.RESOLVED, S.CLOSED},
     S.IN_PROGRESS: {S.OPEN, S.BLOCKED, S.RESOLVED},
@@ -51,6 +64,9 @@ class Actor(str, Enum):
     ASSIGNEE = "assignee"  # the engineer working the ticket
     REPORTER = "reporter"  # the employee who raised it
 
+# which IncidentUpdate fields each actor may send; anything else is a 403 (ensure_fields_allowed).
+# only admins can assign engineers. assignees just work the status. reporters can edit the details and
+# escalate, and their status changes are further limited in _change_status. mirrored in incidentRules.js
 EDITABLE_FIELDS: dict[Actor, set[str]] = {
     Actor.ADMIN: set(IncidentUpdate.model_fields),
     Actor.ASSIGNEE: {"status", "blocked_reason"},
@@ -64,7 +80,9 @@ EDITABLE_FIELDS: dict[Actor, set[str]] = {
 INCIDENT_LOAD = (joinedload(Incident.reporter), joinedload(Incident.assignee))
 
 # ?sort= keys match the incidents grid's column fields. people/buildings sort by name, enums by workflow/severity order
+# (postgres sorts enum columns by declaration order, not alphabetically)
 def _name_of(column, foreign_key):
+    """Correlated scalar subquery: the `column` (e.g. User.username) of the row `foreign_key` points at, for ORDER BY."""
     return select(column).where(column.table.c.id == foreign_key).correlate(Incident).scalar_subquery()
 
 INCIDENT_SORTS = {
@@ -109,6 +127,12 @@ async def _get_visible_incident(db: AsyncSession, incident_id: int, user: User) 
     return incident
 
 def _actor_for(user: User, incident: Incident) -> Actor:
+    """How the user relates to this ticket, which decides what they may change on it.
+
+    Admin wins over everything. An engineer is the ASSIGNEE only on tickets assigned to them; on a
+    ticket they reported themselves they act as REPORTER. Raises 403 otherwise (in practice the
+    visibility check has already turned such a caller away with a 404).
+    """
     if user.role == UserRole.FACILITY_ADMIN:
         return Actor.ADMIN
     if user.role == UserRole.ENGINEER and incident.assignee_id == user.id:
@@ -117,12 +141,18 @@ def _actor_for(user: User, incident: Incident) -> Actor:
         return Actor.REPORTER
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can't modify this incident")
 
+# internal notes are staff-only chatter, hidden from employees (including the ticket's reporter)
 def _can_see_internal_notes(user: User) -> bool:
     return user.role in (UserRole.FACILITY_ADMIN, UserRole.ENGINEER)
 
 # building is required, floor/seat optional, but each must sit inside the one above it.
 # engineers/employees can only report at their own facility
 async def _validate_location(db: AsyncSession, incident: Incident, user: User) -> None:
+    """Check the incident's building/floor/seat ids. 404 if one doesn't exist, 400 if they don't nest or are off-campus.
+
+    Reads the ids from the (possibly just-updated, unsaved) incident object. Doesn't reject inactive
+    locations.
+    """
     building = await get_or_404(db, Building, incident.building_id)
     allowed = visible_facility_ids(user)
     if allowed is not None and building.facility_id not in allowed:
@@ -140,6 +170,10 @@ async def _validate_location(db: AsyncSession, incident: Incident, user: User) -
 
 # the engineer has to work at the incident's facility
 async def _validate_assignee(db: AsyncSession, assignee_id: int, building_id: int) -> None:
+    """404 if the user doesn't exist, 400 if they aren't an active Engineer at the building's facility.
+
+    Doesn't look at the engineer profile, so availability and max_open_tickets aren't enforced here.
+    """
     assignee = await get_or_404(db, User, assignee_id)
     if assignee.role != UserRole.ENGINEER or not assignee.is_active:
         raise _bad_request(f"User '{assignee.username}' is not an active Engineer")
@@ -148,6 +182,14 @@ async def _validate_assignee(db: AsyncSession, assignee_id: int, building_id: in
 
 # moves the incident to a new status: enforces the workflow, stamps lifecycle timestamps, and writes history
 def _change_status(db: AsyncSession, incident: Incident, new_status: IncidentStatus, actor: Actor, user: User) -> None:
+    """Apply a status change to the incident (not committed). Same status is a no-op.
+
+    - 400: the move isn't in ALLOWED_TRANSITIONS
+    - 403: reporters may only close or reopen a Resolved ticket; assignees can't move to or from Closed
+    Side effects: sets acknowledged_at once, sets/clears resolved_at and closed_at, and adds an
+    IncidentStatusHistory row. Call it after the other fields are applied, so a new blocked_reason
+    sent in the same request ends up on the history row.
+    """
     old_status = incident.status
     if new_status == old_status:
         return
@@ -164,6 +206,7 @@ def _change_status(db: AsyncSession, incident: Incident, new_status: IncidentSta
             detail="Engineers can't close or reopen closed incidents, the reporter or an admin closes them",
         )
 
+    # lifecycle timestamps feed the dashboard's time-to-acknowledge/resolve and SLA numbers (analytics.py)
     now = datetime.now(timezone.utc)
     if incident.acknowledged_at is None:
         incident.acknowledged_at = now  # first time anyone actions the ticket
@@ -182,11 +225,16 @@ def _change_status(db: AsyncSession, incident: Incident, new_status: IncidentSta
         from_status=old_status,
         to_status=new_status,
         changed_by_id=user.id,
+        # the incident only keeps the current blocked_reason, so the history row is where past reasons live
         reason=incident.blocked_reason if new_status == S.BLOCKED else None,
     ))
 
 # a blocked/escalated ticket must say why, and the reason is cleared once it no longer applies
 def _check_reasons(incident: Incident) -> None:
+    """Enforce blocked_reason/escalation_reason on the final state of the incident (400 if missing).
+
+    Runs after every update, so a reason has to be sent along with the change that needs it.
+    """
     if incident.status == S.BLOCKED and not incident.blocked_reason:
         raise _bad_request("blocked_reason is required when an incident is Blocked")
     if incident.status != S.BLOCKED:
@@ -220,6 +268,16 @@ async def list_incidents(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[Incident]:
+    """List incidents the caller can see, newest first by default. Any role.
+
+    Always limited to the caller's visible tickets (admins: all, engineers: assigned to or reported
+    by them, employees: reported by them); the filters below only narrow that further.
+    Filters: status/priority/category (repeatable), facility_id (admins only, ignored for others),
+    building/floor/seat, assignee_id, reporter_id, unassigned, is_escalated, and q, which searches
+    title and description, or matches the ticket id when it's a number like "42" or "#42".
+    Paged with limit/offset, total in the X-Total-Count header. 400 for an unknown ?sort= column.
+    """
+    # visibility first: every filter after this is ANDed on, so none of them can widen what's returned
     query = select(Incident).where(_visible_to(current_user))
     # multi-value filters, e.g. ?status=Open&status=Blocked
     if status_filter:
@@ -257,15 +315,23 @@ async def get_incident(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Incident:
+    """Get one incident. Any role, 404 if it doesn't exist or the caller can't see it."""
     return await _get_visible_incident(db, incident_id, current_user)
 
-# anyone can report an incident. it always starts Open and unassigned, with the caller as reporter
 @router.post("", response_model=IncidentRead, status_code=status.HTTP_201_CREATED)
 async def create_incident(
     payload: IncidentCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Incident:
+    """Report an incident. Any role.
+
+    It always starts Open and unassigned, with the caller as reporter, and gets a first status
+    history row (from_status null). Engineers/employees can only report at their own facility.
+
+    - 400: floor not in the building, seat not on the floor (or seat without floor), building at another facility
+    - 404: building, floor or seat doesn't exist
+    """
     incident = Incident(**payload.model_dump(), reporter_id=current_user.id, status=S.OPEN)
     await _validate_location(db, incident, current_user)
     db.add(incident)
@@ -281,6 +347,20 @@ async def update_incident(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Incident:
+    """Edit an incident (PATCH: only the fields sent are changed). Any role, limited by how they relate to it.
+
+    - Facility Admin: any field, any transition in the workflow, assigning/unassigning engineers.
+    - Assigned engineer: status and blocked_reason only; can't move a ticket to or from Closed.
+    - Reporter: details, location, priority and escalation while the ticket isn't Closed; their only
+      status change is closing or reopening a Resolved ticket.
+    Blocked needs a blocked_reason and escalating needs an escalation_reason (both cleared once they
+    no longer apply). Every status change is written to the history.
+
+    - 400: invalid transition, missing reason, bad location, assignee not an active Engineer at the
+      incident's facility, or a reporter editing a Closed ticket
+    - 403: a field or status change this caller isn't allowed to make
+    - 404: incident not visible to the caller, or a referenced location/user doesn't exist
+    """
     incident = await _get_visible_incident(db, incident_id, current_user)
     actor = _actor_for(current_user, incident)
     ensure_fields_allowed(payload, EDITABLE_FIELDS[actor])
@@ -301,12 +381,14 @@ async def update_incident(
         # re-checked when the incident moves building too, so it can't end up with an engineer from another campus
         if incident.assignee_id is not None and (changes & {"assignee_id", "building_id"}):
             await _validate_assignee(db, incident.assignee_id, incident.building_id)
+    # assigned_at tracks the current assignment: restamped on reassignment, cleared when unassigned
     if incident.assignee_id != old_assignee_id:
         incident.assigned_at = datetime.now(timezone.utc) if incident.assignee_id is not None else None
     if payload.status is not None:
         _change_status(db, incident, payload.status, actor, current_user)
     _check_reasons(incident)
 
+    # nothing is committed until every check above has passed; an exception discards the half-applied changes
     await db.commit()
     return await _get_visible_incident(db, incident.id, current_user)
 
@@ -316,17 +398,25 @@ async def delete_incident(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
 ) -> None:
+    """Delete an incident with its notes and status history. Facility Admin only. 404 if it doesn't exist.
+
+    This can't be undone and the ticket disappears from all reporting; closing it keeps the record.
+    """
     incident = await get_or_404(db, Incident, incident_id)
     await db.delete(incident)  # notes and status history cascade
     await db.commit()
 
-# the ticket's full workflow trail, oldest first -- for the timeline view
 @router.get("/{incident_id}/history", response_model=list[StatusHistoryRead])
 async def get_incident_history(
     incident_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[IncidentStatusHistory]:
+    """The ticket's full workflow trail, oldest first, for the timeline view. Any role.
+
+    The first row is the creation (from_status null). 404 if the caller can't see the incident.
+    """
+    # called only for its visibility check (404)
     await _get_visible_incident(db, incident_id, current_user)
     query = (
         select(IncidentStatusHistory)
@@ -341,10 +431,15 @@ async def get_incident_history(
 # anyone who can see the incident can read and add notes. internal notes are engineer/admin only.
 
 async def _get_note(db: AsyncSession, incident_id: int, note_id: int, user: User) -> IncidentNote:
+    """Load a note of this incident with its author. 404 if missing, on another incident, or internal and the user is an employee.
+
+    Doesn't check the incident's visibility itself; callers do that first with _get_visible_incident.
+    """
     query = (
         select(IncidentNote)
         .options(joinedload(IncidentNote.author))
         .where(IncidentNote.id == note_id, IncidentNote.incident_id == incident_id)
+        # fresh updated_at after an edit, same as _get_visible_incident (sessions don't expire on commit)
         .execution_options(populate_existing=True)
     )
     if not _can_see_internal_notes(user):
@@ -354,6 +449,7 @@ async def _get_note(db: AsyncSession, incident_id: int, note_id: int, user: User
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Note {note_id} not found")
     return note
 
+# employees may write public notes only (is_internal false/unset is always fine)
 def _check_internal_flag(user: User, is_internal: bool | None) -> None:
     if is_internal and not _can_see_internal_notes(user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only engineers and admins can write internal notes")
@@ -364,6 +460,10 @@ async def list_notes(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[IncidentNote]:
+    """The incident's notes, oldest first. Any role who can see the incident (404 otherwise).
+
+    Internal notes are left out for employees.
+    """
     await _get_visible_incident(db, incident_id, current_user)
     query = (
         select(IncidentNote)
@@ -382,6 +482,12 @@ async def create_note(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> IncidentNote:
+    """Add a note to an incident. Any role who can see it; the caller is the author.
+
+    - 400: the incident is Closed (admins excepted)
+    - 403: an employee writing an internal note
+    - 404: the caller can't see the incident
+    """
     incident = await _get_visible_incident(db, incident_id, current_user)
     _check_internal_flag(current_user, payload.is_internal)
     if incident.status == S.CLOSED and current_user.role != UserRole.FACILITY_ADMIN:
@@ -392,7 +498,6 @@ async def create_note(
     await db.commit()
     return await _get_note(db, incident_id, note.id, current_user)
 
-# authors can edit their own notes
 @router.patch("/{incident_id}/notes/{note_id}", response_model=NoteRead)
 async def update_note(
     incident_id: int,
@@ -401,6 +506,11 @@ async def update_note(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> IncidentNote:
+    """Edit a note's body or internal flag. Only the note's author, admins included.
+
+    - 403: not the author, or an employee marking it internal
+    - 404: incident not visible, or note not found / not visible to the caller
+    """
     await _get_visible_incident(db, incident_id, current_user)
     note = await _get_note(db, incident_id, note_id, current_user)
     if note.author_id != current_user.id:
@@ -411,7 +521,6 @@ async def update_note(
     await db.commit()
     return await _get_note(db, incident_id, note.id, current_user)
 
-# authors can delete their own notes, admins can delete any
 @router.delete("/{incident_id}/notes/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_note(
     incident_id: int,
@@ -419,6 +528,11 @@ async def delete_note(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
+    """Delete a note. Authors can delete their own notes, admins can delete any.
+
+    - 403: not the author (and not an admin)
+    - 404: incident not visible, or note not found / not visible to the caller
+    """
     await _get_visible_incident(db, incident_id, current_user)
     note = await _get_note(db, incident_id, note_id, current_user)
     if note.author_id != current_user.id and current_user.role != UserRole.FACILITY_ADMIN:

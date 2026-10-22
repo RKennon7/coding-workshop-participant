@@ -1,3 +1,7 @@
+// presentational grid (MUI X DataGrid) with a title, an optional "Add" button and edit/delete row actions.
+// used through ResourceView by the Incidents, Facilities, Engineers and Users pages, so every role sees it.
+// it holds no data or permissions itself: the caller passes rows and the canAdd/canEdit/canDelete flags,
+// and hiding a button here is only UX, the backend still rejects actions the user isn't allowed to do.
 import { useMemo } from 'react';
 import { Alert, Box, Button, Stack, Typography } from '@mui/material';
 import { DataGrid, GridActionsCellItem } from '@mui/x-data-grid';
@@ -6,10 +10,13 @@ import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 
 {/**
- * reusable grid for any backend model
- *  - columns: normal MUI X column definitions, an actions column (edit/delete) is appended for you
+ * Reusable grid for any backend model.
+ *  - rows / columns: rows from the API and normal MUI X column definitions. an actions column (edit/delete)
+ *    is appended for you when canEdit or canDelete is true
  *  - canAdd/canEdit/canDelete: hide the matching button when the user isn't allowed to use it
- *  - onRowClick: clicking anywhere on a row except the action buttons (defaults to onEdit)
+ *  - onAdd() / onEdit(row) / onDelete(row): called by the Add button and the row action icons
+ *  - onRowClick(row): clicking anywhere on a row except the action buttons (defaults to onEdit)
+ *  - getRowId, initialState, height: passed through to the DataGrid (default page size 25)
  *  - includes the grid toolbar with quick search + filters
  *  - toolbar: extra content between the title and the grid (e.g. server-side filters)
  *  - server: {rowCount, paginationModel, onPaginationModelChange, sortModel, onSortModelChange, onSearchChange}
@@ -36,6 +43,7 @@ function DataTable({
     toolbar,
     server,
 }) {
+    // memoized so the DataGrid doesn't see a new columns array (and reset column state) on every render
     const gridColumns = useMemo(() => {
         if (!canEdit && !canDelete) {
             return columns;
@@ -89,6 +97,7 @@ function DataTable({
                     }}
                     pageSizeOptions={[10, 25, 50, 100]}
                     showToolbar
+                    // server mode: the grid becomes controlled, the caller refetches when page/sort/search change
                     {...(server && {
                         paginationMode: 'server',
                         sortingMode: 'server',

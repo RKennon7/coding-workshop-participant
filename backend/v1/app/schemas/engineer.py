@@ -1,3 +1,4 @@
+"""Request/response schemas for engineer profiles (routers/engineers.py)."""
 from datetime import datetime
 
 from pydantic import BaseModel, Field
@@ -6,6 +7,7 @@ from app.models import IncidentCategory
 from app.schemas.common import ORMModel
 
 class EngineerCreate(BaseModel):
+    """Admin-only: create the profile for an existing Engineer user (one profile per user)."""
     user_id: int  # must be a user with the Engineer role
     display_name: str = Field(min_length=1, max_length=100)
     phone: str | None = Field(default=None, max_length=30)
@@ -14,6 +16,7 @@ class EngineerCreate(BaseModel):
     max_open_tickets: int = Field(default=10, ge=1)
 
 class EngineerUpdate(BaseModel):
+    """PATCH body. Admins may send any field; engineers may only update phone and is_available on their own profile."""
     display_name: str | None = Field(default=None, min_length=1, max_length=100)
     phone: str | None = Field(default=None, max_length=30)
     specialty: IncidentCategory | None = None
@@ -21,6 +24,7 @@ class EngineerUpdate(BaseModel):
     max_open_tickets: int | None = Field(default=None, ge=1)
 
 class EngineerRead(ORMModel):
+    """An engineer profile as returned by the API. `id` is the profile id; incidents use `user_id`."""
     id: int
     user_id: int
     display_name: str

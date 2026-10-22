@@ -1,3 +1,9 @@
+/**
+ * The Dashboard tab (first tab for every role). One page, three layouts: GET /analytics/dashboard
+ * returns data.scope = 'all' (Facility Admin), 'assigned' (Engineer) or 'reported' (Employee) and the
+ * matching *Dashboard component below renders it. The backend does the role scoping; this file only
+ * picks the layout, owns the toolbar filters, and turns clicks into navigate('incidents', ...) drill-downs.
+ */
 import { useMemo, useRef, useState } from 'react';
 import { Alert, Box, Button, Grid, LinearProgress, Skeleton, Stack, Typography } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
@@ -61,6 +67,8 @@ function speedTile(label, icon, duration, compareTo, caption) {
     };
 }
 
+// share of active tickets with an update the reporter can see in the last few days (silent_after_days).
+// the silent ones are listed in Needs attention
 function keptInformedTile(communication, onClick) {
     const pct = communication.updated_recently_pct;
     return {
@@ -75,6 +83,7 @@ function keptInformedTile(communication, onClick) {
 }
 
 // a row of stat tiles that wraps 2 / 3 / all-in-one-row as the screen grows
+// each tile is StatCard props: {label, icon, value, caption, tone, muted, delta, onClick}. label doubles as the key
 function TileRow({tiles}) {
     const lg = 12 / tiles.length;
     return (
@@ -90,6 +99,8 @@ function TileRow({tiles}) {
 
 // ---------- Facility Admin: the whole operation ----------
 
+// data: the dashboard response. ctx: shared helpers/labels built in DashboardPage.
+// attentionRef: lets tiles scroll the page to the Needs attention list
 function AdminDashboard({data, ctx, attentionRef}) {
     const {current, period, communication} = data;
     const {openIncidents, openIncident, showAttention, attention, rangeLabel, compareTo, showFacility, facilityNames} = ctx;
@@ -177,9 +188,11 @@ function AdminDashboard({data, ctx, attentionRef}) {
 
 // ---------- Engineer: my queue + team capacity ----------
 
+// counts here are already limited to the engineer's own tickets by the backend; the workload card is the team
 function EngineerDashboard({data, ctx, attentionRef, userId}) {
     const {current, period, communication} = data;
     const {openIncidents, openIncident, showAttention, attention, rangeLabel, compareTo} = ctx;
+    // drill-downs add the assignee filter so the incidents list matches the engineer's own counts
     const mine = (filters) => openIncidents({assignee_id: userId, ...filters});
 
     return (
@@ -246,6 +259,7 @@ function EngineerDashboard({data, ctx, attentionRef, userId}) {
 
 // ---------- Employee: my tickets ----------
 
+// kept simple on purpose: no range, SLA or team data, just where their own tickets stand
 function EmployeeDashboard({data, ctx}) {
     const {current, period} = data;
     const {openIncidents, openIncident} = ctx;
@@ -281,6 +295,7 @@ function EmployeeDashboard({data, ctx}) {
     );
 }
 
+// placeholder shown only for the very first load (later loads keep the old data on screen)
 function LoadingSkeleton() {
     return (
         <Grid container spacing={2}>
@@ -293,7 +308,9 @@ function LoadingSkeleton() {
 
 {/**
  * per-persona dashboard. live counts ("right now") ignore the date range; speed, SLA, trends,
- * categories and locations use it. tiles, alerts and chart bars link to the matching incidents
+ * categories and locations use it. tiles, alerts and chart bars link to the matching incidents.
+ * the facility and building pickers are admin only: engineers and employees are fixed to their
+ * own campus by the backend
  */}
 function DashboardPage() {
     const {role} = usePermissions();
@@ -311,6 +328,7 @@ function DashboardPage() {
     const [buildingId, setBuildingId] = useState(null);
     const [attentionFilter, setAttentionFilter] = useState(null);
     const attentionRef = useRef(null);
+    // facility/building lists are only loaded for admins, who are the only ones with the pickers
     const facilityOptions = useOptions(facilitiesService, (f) => f.name, {enabled: isAdmin});
     const allBuildingOptions = useOptions(buildingsService, (b) => b.name, {enabled: isAdmin});
     const buildingOptions = useMemo(() => (facilityIds.length
@@ -322,6 +340,7 @@ function DashboardPage() {
         enabled: !isAdmin || profile !== undefined,
     });
 
+    // clear the building filter if it no longer belongs to one of the picked facilities
     const changeFacilities = (ids) => {
         setPickedFacilityIds(ids);
         const stillVisible = allBuildingOptions.some((o) => o.value === buildingId && (!ids.length || ids.includes(o.row.facility_id)));
@@ -332,6 +351,7 @@ function DashboardPage() {
     const showFacility = isAdmin && facilityOptions.length > 1 && facilityIds.length !== 1;
 
     const rangeLabel = describeRange(range);
+    // everything the role layouts share, so they don't each need the page's state and setters
     const ctx = {
         rangeLabel,
         compareTo: describePreviousRange(range),
@@ -343,7 +363,9 @@ function DashboardPage() {
             ...(buildingId != null && {building_id: buildingId}),
             ...filters,
         }}),
+        // opens the Incidents tab with that ticket's form already open
         openIncident: (incidentId) => navigate('incidents', {incidentId}),
+        // filter the Needs attention list to one kind (e.g. 'sla_breached', 'silent') and scroll to it
         showAttention: (kind) => {
             setAttentionFilter(kind);
             attentionRef.current?.scrollIntoView({behavior: 'smooth', block: 'start'});
@@ -353,6 +375,7 @@ function DashboardPage() {
             filter: attentionFilter,
             onFilterChange: setAttentionFilter,
             scope: {facility_id: isAdmin ? facilityIds : [], building_id: buildingId ?? undefined},
+            // changes on every dashboard load, which tells the list to refetch too
             refreshKey: loadedAt?.getTime(),
         },
     };
@@ -363,10 +386,13 @@ function DashboardPage() {
         [ROLES.ENGINEER]: ['My dashboard', `Your assigned tickets and team capacity${profile?.facility_name ? ` at ${profile.facility_name}` : ''}${updated}`],
         [ROLES.EMPLOYEE]: [`Hi ${user?.sub ?? 'there'}`, `Here's where your reported issues stand${updated}`],
     };
+    // user.sub is the username claim from the JWT
     const [title, subtitle] = titles[role] ?? titles[ROLES.EMPLOYEE];
 
     return (
         <Stack spacing={2}>
+            {/* passing null for a picker hides it: employees get no range picker, only admins get facility/building pickers
+                (the facility picker only once there's more than one facility) */}
             <DashboardToolbar
                 title={title}
                 subtitle={subtitle}
@@ -399,6 +425,7 @@ function DashboardPage() {
                 {!data && !error && <LoadingSkeleton />}
                 {data && (
                     <Box sx={{opacity: loading ? 0.6 : 1, transition: 'opacity 150ms'}}>
+                        {/* layout follows the scope the backend returned, which it derives from the user's role */}
                         {data.scope === 'all' && <AdminDashboard data={data} ctx={ctx} attentionRef={attentionRef} />}
                         {data.scope === 'assigned' && <EngineerDashboard data={data} ctx={ctx} attentionRef={attentionRef} userId={user?.uid} />}
                         {data.scope === 'reported' && <EmployeeDashboard data={data} ctx={ctx} />}

@@ -1,8 +1,14 @@
+"""Request/response schemas for the location hierarchy and the campus setup wizard (routers/facilities.py).
+
+Create/Update bodies are Facility Admin only; Read schemas are returned to anyone who can see the location.
+"""
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.common import ORMModel
 
 # Facility > Building > Floor > Seat. Each level has Create (POST), Update (PATCH, all optional) and Read schemas.
+# the parent id in Create/Update (facility_id, building_id, floor_id) is checked by the router: 404 if it doesn't exist.
+# sending a new parent id in an Update moves the item (and everything under it) to that parent
 
 class FacilityCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
@@ -75,14 +81,19 @@ class SeatRead(ORMModel):
 # ---------- bulk setup: POST /facilities/setup and POST /facilities/{id}/buildings/bulk ----------
 # floors are named "Floor 1".."Floor N", seats "{code}-{floor}-{seat:02d}" (e.g. NT-3-02)
 
-MAX_SEATS_PER_REQUEST = 5000
+MAX_SEATS_PER_REQUEST = 5000  # keeps one request (a single transaction) to a sensible size
 
 class BuildingPlan(BaseModel):
+    """One building in a bulk/setup request: its floors and seats are generated, not listed.
+
+    `code` is the seat prefix (letters/digits, uppercased); seats_per_floor may be 0 for floors without desks.
+    """
     name: str = Field(min_length=1, max_length=100)
     code: str = Field(min_length=1, max_length=10, pattern=r"^[A-Za-z0-9]+$", description="seat code prefix, e.g. NT")
     floors: int = Field(ge=1, le=100)
     seats_per_floor: int = Field(ge=0, le=200)
 
+    # field validators run after the Field constraints above, so the strip doesn't affect min_length
     @field_validator("name")
     @classmethod
     def _strip_name(cls, value: str) -> str:
@@ -94,6 +105,12 @@ class BuildingPlan(BaseModel):
         return value.upper()
 
 class BuildingsBulkCreate(BaseModel):
+    """Body of POST /facilities/{id}/buildings/bulk: 1-50 buildings to generate.
+
+    Building names (case-insensitive) and codes must be unique within the request, and the total
+    seat count is capped at MAX_SEATS_PER_REQUEST; violations are a 422. Name clashes with buildings
+    that already exist are checked by the router (409).
+    """
     buildings: list[BuildingPlan] = Field(min_length=1, max_length=50)
 
     @model_validator(mode="after")
@@ -107,10 +124,12 @@ class BuildingsBulkCreate(BaseModel):
         return self
 
 class FacilitySetup(BuildingsBulkCreate):
+    """Body of POST /facilities/setup (the setup wizard): a new facility plus its buildings, created in one transaction."""
     name: str = Field(min_length=1, max_length=100)
     address: str | None = None
 
 class FacilitySetupResult(BaseModel):
+    """Response of both bulk endpoints: the facility and how many buildings/floors/seats were created."""
     facility: FacilityRead
     buildings: int
     floors: int

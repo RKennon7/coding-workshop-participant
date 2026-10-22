@@ -1,3 +1,4 @@
+"""EngineerProfile model: the extra, workload-related details kept for users with the Engineer role."""
 from datetime import datetime
 
 from app.models.base import Base
@@ -6,6 +7,12 @@ from sqlalchemy import DateTime, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 class EngineerProfile(Base):
+    """One per engineer user (table `engineer_profiles`, user_id is unique).
+
+    is_available and max_open_tickets feed workload balancing on the dashboard (load % = active
+    tickets / max_open_tickets). Incidents reference the engineer's *user* id (Incident.assignee_id),
+    not this profile's id. The profile has no facility of its own; it uses the linked user's.
+    """
     __tablename__ = "engineer_profiles"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -22,4 +29,5 @@ class EngineerProfile(Base):
 
     @property
     def facility_id(self) -> int | None:
+        """The engineer's campus, read through the user account (exposed as EngineerRead.facility_id)."""
         return self.user.facility_id

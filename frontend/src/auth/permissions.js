@@ -4,8 +4,13 @@
  * Components check permissions (what a user can do) instead of roles (who they are),
  * so changing what a role is allowed to do only means editing the map below.
  * The backend still has to enforce these, the frontend only hides what a user can't use.
+ *
+ * Components normally check these through hooks/usePermissions.js (which reads the role from the
+ * logged in user's JWT); components/layout/navigation.js uses them to decide which tabs show.
+ * Per-ticket rules (e.g. "only the assigned engineer") live in incidentRules.js instead.
  */
 
+// values match the `role` claim in the JWT and the role field returned by /users
 export const ROLES = {
     FACILITY_ADMIN: 'Facility Admin',
     ENGINEER: 'Engineer',
@@ -63,6 +68,12 @@ const ROLE_PERMISSIONS = {
     ]),
 };
 
+/**
+ * Whether a role has a permission. Unknown or missing roles (e.g. logged out) have none.
+ * @param {string | undefined} role one of ROLES
+ * @param {string} permission one of PERMISSIONS
+ * @returns {boolean}
+ */
 export function hasPermission(role, permission) {
     return ROLE_PERMISSIONS[role]?.has(permission) ?? false;
 }

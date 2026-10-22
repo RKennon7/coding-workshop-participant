@@ -1,3 +1,11 @@
+"""Seed a small but realistic demo dataset so dashboards and reports have something to show.
+
+Two campuses, each with its own buildings, engineers, employees and incidents (complete with status
+history and notes). Called by scripts/init_db.py unless sample data is turned off.
+Safe to re-run: each facility is skipped if it already exists, and users already created by
+seed_users.py are reused (and moved into their facility if they have none).
+Run from backend/v1:  python -m scripts.seed_sample_data
+"""
 import asyncio
 import random
 from dataclasses import dataclass
@@ -24,16 +32,15 @@ from app.models import (
 from app.security import hash_password
 from scripts.seed_users import DEFAULT_PASSWORD
 
-# Seeds a small but realistic dataset for dashboards/reporting: two campuses, each with its own buildings,
-# engineers, employees and incidents. Safe to re-run: each facility is skipped if it already exists, and
-# users already created by seed_users.py are reused (and moved into their facility if they have none).
-# Run from backend/v1:  python -m scripts.seed_sample_data
-
 rng = random.Random(42)  # fixed seed so every run produces the same dataset
+# (module-level, so that holds per fresh process; a second run in a warm Lambda continues the sequence)
+# incident dates are generated relative to this, so the sample data always looks recent.
+# it's taken at import time, i.e. when init_db first ran in this process
 NOW = datetime.now(timezone.utc)
 
 @dataclass
 class FacilitySpec:
+    """Everything needed to generate one sample campus: its layout, people and incident mix."""
     name: str
     address: str
     buildings: dict[str, tuple[str, int]]  # name -> (seat prefix, floor count)
@@ -228,6 +235,7 @@ FOLLOW_UP_NOTES = [
 ]
 
 
+# random duration between lo and hi hours
 def hours(lo: float, hi: float) -> timedelta:
     return timedelta(hours=rng.uniform(lo, hi))
 
@@ -235,6 +243,10 @@ def hours(lo: float, hi: float) -> timedelta:
 async def get_or_create_user(
     session, username: str, email: str, role: UserRole, password_hash: str, facility: Facility | None = None,
 ) -> User:
+    """Find a user by email or add a new one (not flushed). An existing user's password and role are left as they are.
+
+    If `facility` is given and the user has none yet, they're moved into it (e.g. the test accounts from seed_users.py).
+    """
     user = await session.scalar(select(User).where(User.email == email))
     if user is None:
         user = User(username=username, email=email, password_hash=password_hash, role=role)
@@ -245,6 +257,11 @@ async def get_or_create_user(
 
 
 def build_locations(spec: FacilitySpec) -> tuple[Facility, list[tuple[Building, Floor, list[Seat]]]]:
+    """Build (but don't add) the facility tree, using the same naming scheme as the setup wizard.
+
+    Returns the facility plus a flat list of (building, floor, seats), one entry per floor in order,
+    which is what spec.hotspot_floor indexes into.
+    """
     facility = Facility(name=spec.name, address=spec.address)
     locations = []
     for building_name, (prefix, floor_count) in spec.buildings.items():
@@ -259,6 +276,8 @@ def build_locations(spec: FacilitySpec) -> tuple[Facility, list[tuple[Building, 
 
 
 def pick_location(category: IncidentCategory, spec: FacilitySpec, locations) -> tuple[Building, Floor, Seat | None]:
+    """Choose where an incident happened, skewed so the hotspot floor/seat stand out on the dashboard."""
+    # one roll drives both skews: < 0.4 picks the hotspot floor, and < 0.25 (a subset of those) the hotspot seat
     roll = rng.random()
     building, floor, seats = locations[spec.hotspot_floor] if roll < 0.4 else rng.choice(locations)
     if category in AREA_CATEGORIES:
@@ -269,6 +288,10 @@ def pick_location(category: IncidentCategory, spec: FacilitySpec, locations) -> 
 
 
 def pick_engineer(category: IncidentCategory, engineers, available_only: bool) -> User:
+    """Pick an assignee: usually a specialist in the category, otherwise weighted by workload weight.
+
+    available_only keeps unavailable engineers off active tickets (they may still appear on finished ones).
+    """
     pool = [(user, profile, weight) for user, profile, weight in engineers if profile.is_available or not available_only]
     specialists = [user for user, profile, _ in pool if profile.specialty == category]
     if specialists and rng.random() < 0.6:
@@ -277,6 +300,11 @@ def pick_engineer(category: IncidentCategory, engineers, available_only: bool) -
 
 
 def build_incident(status: IncidentStatus, admin: User, spec: FacilitySpec, engineers, employees, locations) -> Incident:
+    """Simulate one ticket's life up to `status`: timestamps, assignee, status history and notes.
+
+    The timeline is built as offsets from creation and then anchored so the last activity is a little
+    before NOW. Users and locations must already have ids (flushed).
+    """
     category = rng.choices(list(CATEGORY_WEIGHTS), weights=list(CATEGORY_WEIGHTS.values()))[0]
     title, description = rng.choice(TEMPLATES[category])
     priority = rng.choices(list(PRIORITY_WEIGHTS), weights=list(PRIORITY_WEIGHTS.values()))[0]
@@ -297,6 +325,7 @@ def build_incident(status: IncidentStatus, admin: User, spec: FacilitySpec, engi
     engineer = None
     blocked_reason = None
 
+    # record a status change at the current offset t (from = the previous entry's to_status)
     def move(to_status: IncidentStatus, by: User, reason: str | None = None) -> None:
         history.append((t, history[-1][2], to_status, by, reason))
 
@@ -347,6 +376,7 @@ def build_incident(status: IncidentStatus, admin: User, spec: FacilitySpec, engi
     if status in ACTIVE_STATUSES and rng.random() < 0.35:
         notes.append((t + hours(1, 12), reporter, rng.choice(FOLLOW_UP_NOTES), False))
 
+    # pick created_at so the ticket's last activity lands a status-appropriate idle time before NOW
     last_activity = max([t] + [offset for offset, *_ in notes])
     created = NOW - last_activity - timedelta(days=rng.uniform(*IDLE_DAYS[status]))
 
@@ -385,6 +415,7 @@ def build_incident(status: IncidentStatus, admin: User, spec: FacilitySpec, engi
 
 
 async def seed_facility(session, spec: FacilitySpec, admin: User, password_hash: str) -> str:
+    """Add one campus with its people and incidents to the session (the caller commits). Returns a summary line."""
     facility, locations = build_locations(spec)
     session.add(facility)
     await session.flush()  # assign ids so users and incidents can reference the facility and its locations
@@ -392,7 +423,7 @@ async def seed_facility(session, spec: FacilitySpec, admin: User, password_hash:
     engineers = []
     for username, email, display_name, specialty, available, weight in spec.engineers:
         user = await get_or_create_user(session, username, email, UserRole.ENGINEER, password_hash, facility)
-        await session.flush()
+        await session.flush()  # a newly created user needs an id before its profile can be looked up/created
         profile = await session.scalar(select(EngineerProfile).where(EngineerProfile.user_id == user.id))
         if profile is None:
             profile = EngineerProfile(user_id=user.id, display_name=display_name, specialty=specialty, is_available=available)
@@ -416,6 +447,10 @@ async def seed_facility(session, spec: FacilitySpec, admin: User, password_hash:
 
 
 async def seed_sample_data(password_hash: str | None = None) -> None:
+    """Seed every campus in FACILITIES that doesn't exist yet, in a single transaction.
+
+    password_hash is used for newly created accounts only; defaults to a hash of DEFAULT_PASSWORD.
+    """
     password_hash = password_hash or hash_password(DEFAULT_PASSWORD)
     async with AsyncSessionLocal() as session:
         admin = await get_or_create_user(session, *ADMINS[0], UserRole.FACILITY_ADMIN, password_hash)

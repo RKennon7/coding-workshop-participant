@@ -1,3 +1,8 @@
+/**
+ * MUI theme factory for the light and dark color modes.
+ * ColorModeContext calls getTheme(mode) and passes the result to MUI's ThemeProvider, so
+ * components pick colors up via theme.palette / the sx prop instead of hard-coding them.
+ */
 import {createTheme} from '@mui/material/styles';
 import '@fontsource-variable/inter';
 
@@ -15,6 +20,7 @@ const palettes = {
         divider: 'rgba(31, 42, 46, 0.12)',
         // chart series: brand teal/clay pushed to enough chroma to read as color on a chart,
         // checked for color-blind separation + contrast against this mode's paper
+        // (custom key, not part of MUI's palette: read by the dashboard chart components)
         chart: { primary: '#0E9488', secondary: '#E0662C' },
     },
     dark: {
@@ -27,6 +33,12 @@ const palettes = {
     },
 };
 
+/**
+ * Builds the app's MUI theme.
+ * @param {'light' | 'dark'} mode which palette to use
+ * @returns a MUI theme with the shared typography and component defaults (outlined cards,
+ *   small text fields, flat buttons and app bar, no sentence-case-breaking text transform)
+ */
 export function getTheme(mode) {
     return createTheme({
         palette: { mode, ...palettes[mode] },

@@ -1,3 +1,6 @@
+// filter bar above the incidents grid (IncidentsPage passes it to ResourceView as `filters`).
+// all roles see it, but the facility picker is admin-only and the assignee picker needs ENGINEERS_VIEW
+// (engineers and admins). the backend still limits which incidents each role can see at all.
 import { Button, Chip, MenuItem, Stack, TextField } from '@mui/material';
 import FlagIcon from '@mui/icons-material/Flag';
 import FilterAltOffIcon from '@mui/icons-material/FilterAltOff';
@@ -5,8 +8,10 @@ import { INCIDENT_CATEGORIES, INCIDENT_PRIORITIES, INCIDENT_STATUSES } from '../
 import { toListParams } from '../../utils/filters.js';
 import FacilityMultiSelect from '../common/FacilityMultiSelect.jsx';
 
+// sentinel option value in the assignee dropdown, turned into the API's ?unassigned=true instead of an assignee_id
 const UNASSIGNED = 'unassigned';
 
+// multi-select over plain string enums (status/priority/category). value is an array of strings
 function MultiSelect({label, value = [], options, onChange}) {
     return (
         <TextField
@@ -27,6 +32,7 @@ function MultiSelect({label, value = [], options, onChange}) {
     );
 }
 
+// single-select over [{value, label}] options with an "Any" entry. "Any" is reported as null (filter off)
 function SingleSelect({label, value, options, onChange}) {
     return (
         <TextField
@@ -43,13 +49,18 @@ function SingleSelect({label, value, options, onChange}) {
 }
 
 {/**
- * server-side filters for the incidents grid (the grid's own quick search still works on top)
+ * Server-side filters for the incidents grid (the grid's own quick search still works on top).
  *  - filters: {status: [], priority: [], category: [], facility_id: [], building_id, floor_id, seat_id, assignee_id, unassigned, is_escalated}
+ *    the parent turns this into query params with utils/filters.js toListParams (unset values are dropped)
+ *  - onChange(filters): receives the whole new filter object, not just the changed keys
  *  - facilityOptions: admins only, omit to hide the facility picker. buildingOptions should already be narrowed to it
+ *  - floorOptions / seatOptions: [{value, label}], only used to label the floor/seat chips
+ *  - engineerOptions / showAssignee: the assignee picker (with an "Unassigned" choice), hidden when showAssignee is false
  *  - floor/seat have no dropdown, they come from dashboard links and show as removable chips
  */}
 function IncidentFilters({filters, onChange, facilityOptions, buildingOptions, floorOptions, seatOptions, engineerOptions, showAssignee}) {
     const set = (changes) => onChange({...filters, ...changes});
+    // chip label for a floor/seat id, falls back to #id if the options haven't loaded (or don't include it)
     const label = (options, id) => options.find((option) => option.value === id)?.label ?? `#${id}`;
     const hasFilters = Object.keys(toListParams(filters)).length > 0;
 
@@ -79,6 +90,7 @@ function IncidentFilters({filters, onChange, facilityOptions, buildingOptions, f
                     label="Assignee"
                     value={filters.unassigned ? UNASSIGNED : filters.assignee_id}
                     options={[{value: UNASSIGNED, label: 'Unassigned'}, ...engineerOptions]}
+                    // unassigned and assignee_id are mutually exclusive, picking one clears the other
                     onChange={(value) => set(value === UNASSIGNED
                         ? {unassigned: true, assignee_id: null}
                         : {unassigned: null, assignee_id: value})}
@@ -89,6 +101,7 @@ function IncidentFilters({filters, onChange, facilityOptions, buildingOptions, f
                 label="Escalated only"
                 color={filters.is_escalated ? 'warning' : 'default'}
                 variant={filters.is_escalated ? 'filled' : 'outlined'}
+                // toggle chip: on sends ?is_escalated=true, off removes the filter (null), there's no "not escalated" filter
                 onClick={() => set({is_escalated: filters.is_escalated ? null : true})}
                 aria-pressed={Boolean(filters.is_escalated)}
             />

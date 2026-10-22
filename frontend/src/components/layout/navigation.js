@@ -1,3 +1,6 @@
+// the main tab menu's definition. MainLayout renders a tab per section the user's role allows
+// and mounts the section's component as the active page. ids are what navigate() takes
+// (see context/NavigationContext.jsx)
 import DashboardIcon from '@mui/icons-material/SpaceDashboard';
 import ConfirmationNumberIcon from '@mui/icons-material/ConfirmationNumber';
 import ApartmentIcon from '@mui/icons-material/Apartment';
@@ -11,6 +14,8 @@ import EngineersPage from '../../pages/EngineersPage.jsx';
 import UsersPage from '../../pages/UsersPage.jsx';
 
 // main menu tabs, in display order. a tab only shows if the user has its permission
+// (see ROLE_PERMISSIONS in auth/permissions.js: e.g. Users is admin only). the first visible tab is
+// where a user lands after login
 export const NAV_SECTIONS = [
     {id: 'analytics', label: 'Dashboard', icon: DashboardIcon, permission: PERMISSIONS.ANALYTICS_VIEW, component: DashboardPage},
     {id: 'incidents', label: 'Incidents', icon: ConfirmationNumberIcon, permission: PERMISSIONS.INCIDENTS_VIEW, component: IncidentsPage},

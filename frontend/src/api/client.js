@@ -1,3 +1,8 @@
+/**
+ * The single shared axios instance for talking to the FastAPI backend (backend/v1).
+ * services/ builds every API call on top of it, and AuthContext uses it for login and /auth/me.
+ * It adds the bearer token to each request and reports rejected tokens (401) back to AuthContext.
+ */
 import axios from 'axios';
 
 // backend lambda lives in backend/v1, so cloudfront (aws) and the dev proxy (local)
@@ -27,6 +32,8 @@ const apiClient = axios.create({
     paramsSerializer: {indexes: null},
 });
 
+// attach the JWT that AuthContext saved to localStorage after login. read on every request (not cached)
+// so a new login or a logout takes effect immediately
 apiClient.interceptors.request.use((config) => {
     const token = localStorage.getItem('accessToken');
     if(token){
@@ -39,6 +46,10 @@ apiClient.interceptors.request.use((config) => {
 // when the backend rejects their token (expired, invalid, etc.)
 let onUnauthorized = null;
 
+/**
+ * Registers the function to call when an authenticated request gets a 401.
+ * @param {(() => void) | null} handler pass null to unregister (AuthProvider does this on unmount)
+ */
 export function setUnauthorizedHandler(handler) {
     onUnauthorized = handler;
 }
@@ -52,6 +63,7 @@ apiClient.interceptors.response.use(
         if (error.response?.status === 401 && sentToken && onUnauthorized) {
             onUnauthorized();
         }
+        // still reject, so the caller can show its own error (see getErrorMessage in hooks/useResource.js)
         return Promise.reject(error);
     }
 );

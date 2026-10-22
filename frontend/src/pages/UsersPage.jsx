@@ -1,3 +1,8 @@
+/**
+ * The Users tab (Facility Admin only, via users:view in auth/permissions.js): user accounts, their
+ * role and home facility. Admins create accounts here; a user without a password is an invite that
+ * the person claims on the register screen (is_registered shows whether they have).
+ */
 import { useMemo } from 'react';
 import { Chip } from '@mui/material';
 import ResourceView from '../components/common/ResourceView.jsx';
@@ -6,6 +11,7 @@ import { toLabelMap, useOptions } from '../hooks/useResource.js';
 import { facilitiesService, usersService } from '../services/index.js';
 import { USER_ROLES, toOptions } from '../constants/enums.js';
 
+/** Users grid + form on top of ResourceView, backed by /users (backend/v1/app/routers/users.py). */
 function UsersPage() {
     const facilityOptions = useOptions(facilitiesService, (f) => f.name);
 
@@ -31,6 +37,7 @@ function UsersPage() {
 
     const fields = useMemo(() => [
         {name: 'username', label: 'Username', required: true},
+        // the @acme.inc rule is enforced by the backend, the helper text just warns up front
         {name: 'email', label: 'Email', type: 'email', required: true, helperText: 'Must be an @acme.inc address'},
         {name: 'role', label: 'Role', type: 'select', options: toOptions(USER_ROLES), defaultValue: 'Employee', required: true},
         {

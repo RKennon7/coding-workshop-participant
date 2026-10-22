@@ -1,3 +1,8 @@
+// complete list + create/edit/delete screen for one backend resource, wired to its REST endpoints.
+// the Incidents, Facilities (and its buildings/floors/seats tabs), Engineers and Users pages are each mostly
+// one ResourceView with page-specific columns and fields. it is shown to every role that can open those pages;
+// buttons and inputs are gated by the permissions in auth/permissions.js, which is only UX:
+// the backend enforces the same rules (and row-level visibility) on every request.
 import { useEffect, useState } from 'react';
 import { Alert, Snackbar } from '@mui/material';
 import DataTable from './DataTable.jsx';
@@ -7,8 +12,12 @@ import { usePermissions } from '../../hooks/usePermissions.js';
 import { getErrorMessage, useResource } from '../../hooks/useResource.js';
 
 {/**
- * full CRUD screen for one resource: DataTable + add/edit form + delete confirmation
+ * Full CRUD screen for one resource: DataTable + add/edit form (EntityFormDialog) + delete confirmation
+ * (ConfirmDialog) + a success/error snackbar.
+ *  - title / singular: grid heading and the noun used in buttons and messages ("Add Incident", "Incident created")
  *  - service: from services/index.js (must be a stable reference, not created during render)
+ *  - columns: DataGrid column definitions
+ *  - getRowLabel(row): name shown in the edit dialog title and delete prompt (default: row.name or #id)
  *  - permissions: {create, update, delete} permission strings for the resource
  *  - fields: EntityFormDialog field definitions. a field can set editableBy: [permissions]
  *    to allow partial edits, e.g. status editable by INCIDENTS_UPDATE or INCIDENTS_UPDATE_STATUS,
@@ -21,6 +30,8 @@ import { getErrorMessage, useResource } from '../../hooks/useResource.js';
  *    delete button (e.g. a building that still has incidents), message replaces the default confirmation text
  *  - openRowId / initialCreate: open that row's form (or the create form) on mount, e.g. when the dashboard links here
  * the grid is paged, sorted and searched on the server: only the visible page is loaded
+ * (useResource with paged: true -> GET ?limit=&offset=&sort=&q=, total from the X-Total-Count header)
+ * rows stay clickable even without edit rights: the form then opens read-only
  */}
 
 const DEFAULT_PAGE_SIZE = 25;
@@ -48,6 +59,8 @@ function ResourceView({
     const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
     const [sortModel, setSortModel] = useState([]);
     const [search, setSearch] = useState('');
+    // the page number is stored with the list it belongs to, so a new filter/sort/search reads as page 0
+    // during the same render, without an effect that resets it (and a wasted request for the old page)
     const listKey = JSON.stringify({listParams, pageSize, sortModel, search});
     const [pageState, setPageState] = useState({listKey, page: 0});
     const page = pageState.listKey === listKey ? pageState.page : 0;
@@ -98,8 +111,10 @@ function ResourceView({
         };
     }, [openRowId, service]);
 
+    // these only hide/disable UI. the backend checks the same permissions (e.g. require_admin) on every call
     const canCreate = can(permissions.create);
     const canDelete = can(permissions.delete);
+    // a field is editable if its editableBy rule allows it, or by default if the user has the update permission
     const isRowRule = (field) => typeof field.editableBy === 'function';
     const isEditable = (field, row) => (isRowRule(field) ? field.editableBy(row) : canAny(field.editableBy ?? [permissions.update]));
     // show the edit action if the user can change at least one field. row-dependent fields count,
@@ -115,7 +130,8 @@ function ResourceView({
             setToast({message: `${singular} created`, severity: 'success'});
             return;
         }
-        // PATCH only what changed
+        // PATCH only what changed (values only holds the editable fields already).
+        // nothing changed -> no request, no toast, the dialog just closes
         const changes = Object.fromEntries(
             Object.entries(values).filter(([name, value]) => value !== (form.row[name] ?? null))
         );
@@ -154,6 +170,7 @@ function ResourceView({
                 server={{
                     rowCount: total,
                     paginationModel: {page, pageSize},
+                    // a new page size changes listKey, which already sends the user back to page 0
                     onPaginationModelChange: (model) => {
                         if (model.pageSize !== pageSize) setPageSize(model.pageSize);
                         else setPage(model.page);
@@ -173,6 +190,7 @@ function ResourceView({
                     title={form.mode === 'create' ? `New ${singular}` : getRowLabel(form.row)}
                     fields={fields}
                     initialValues={form.row}
+                    // creating: every field is open to whoever may create. editing: per-field rules above
                     isFieldEditable={(field) => (form.mode === 'create' ? canCreate : isEditable(field, form.row))}
                     onSubmit={handleSubmit}
                     onClose={() => setForm(null)}
@@ -184,6 +202,7 @@ function ResourceView({
             <ConfirmDialog
                 open={Boolean(deleting)}
                 title={`Delete ${singular.toLowerCase()}?`}
+                // getDeleteDetails' message (e.g. what gets deleted along with a building) wins over the generic text
                 message={deleteInfo?.message ?? (deleting ? `"${getRowLabel(deleting)}" will be permanently deleted.` : '')}
                 loading={Boolean(deleteInfo?.loading)}
                 confirmDisabled={Boolean(deleteInfo?.blocked || deleteInfo?.loading)}

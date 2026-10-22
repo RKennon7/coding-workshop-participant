@@ -1,8 +1,12 @@
+// "Problem locations": the buildings / floors / seats with the most incidents reported in the selected range.
+// answers "which buildings, floors or seats have recurring issues?". renders period.hotspots from GET /analytics/dashboard
+// (Hotspots: top 8 per level, HOTSPOT_LIMIT in backend/v1/app/routers/analytics.py). Facility Admin dashboard only
 import { useState } from 'react';
 import { Box, Chip, List, ListItemButton, Stack, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material';
 import RepeatIcon from '@mui/icons-material/Repeat';
 import DashboardCard, { EmptyState } from './DashboardCard.jsx';
 
+// key: the field of period.hotspots to show; filter: the incidents-page filter a click drills down with
 const LEVELS = [
     {key: 'buildings', label: 'Building', filter: 'building_id'},
     {key: 'floors', label: 'Floor', filter: 'floor_id'},
@@ -11,12 +15,17 @@ const LEVELS = [
 
 {/**
  * locations with the most incidents in the range, by building / floor / seat.
- * "Recurring" = the same kind of issue keeps coming back to that spot
+ * "Recurring" = the same kind of issue keeps coming back to that spot: its top category was reported
+ * at least twice in the range (RECURRING_MIN in backend/v1/app/routers/analytics.py)
+ *  - hotspots: {buildings, floors, seats}, each a list of HotspotItem, busiest first
+ *  - onSelect(filters): incident filters for the clicked location, e.g. {floor_id: 12, building_id: 3}
+ *  - showFacility: prefix each location with its campus when several are on screen
  */}
 function HotspotsCard({hotspots, rangeLabel, onSelect, showFacility = false}) {
     const [level, setLevel] = useState('floors');
     const {filter} = LEVELS.find((l) => l.key === level);
     const items = hotspots[level];
+    // bars are scaled to the busiest location in the list (at least 1, so an empty list can't divide by 0)
     const max = Math.max(1, ...items.map((item) => item.count));
 
     return (
@@ -36,6 +45,7 @@ function HotspotsCard({hotspots, rangeLabel, onSelect, showFacility = false}) {
                     {items.map((item) => (
                         <ListItemButton
                             key={item.id}
+                            // building_id is always sent too, so the incidents page's building filter matches the floor/seat
                             onClick={() => onSelect({[filter]: item.id, building_id: item.building_id})}
                             sx={{px: 1, py: 0.75, borderRadius: 2, display: 'block'}}
                         >
@@ -52,6 +62,7 @@ function HotspotsCard({hotspots, rangeLabel, onSelect, showFacility = false}) {
                                 </Typography>
                                 {item.recurring && (
                                     <Chip
+                                        // icon + label, so "recurring" doesn't rely on the warning color
                                         size="small"
                                         variant="outlined"
                                         color="warning"

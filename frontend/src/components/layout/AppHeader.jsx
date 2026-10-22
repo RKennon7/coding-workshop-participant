@@ -1,9 +1,16 @@
+// top app bar, rendered by MainLayout above the tab menu, so every logged-in role sees it.
+// shows who is logged in (username and role from the JWT, campus from GET /auth/me), logout and the theme toggle.
 import { AppBar, Box, Button, Chip, IconButton, Toolbar, Tooltip, Typography } from '@mui/material';
 import LogoutIcon from '@mui/icons-material/Logout';
 import { useAuth } from '../../context/AuthContext.jsx';
 import ColorModeToggle from './ColorModeToggle.jsx';
 
-{/** top bar shown on every authenticated page: app title, current user + role, logout. compacts on phones */}
+{/**
+ * Top bar shown on every authenticated page: app title, current user + role, logout. Compacts on phones.
+ * takes no props, everything comes from AuthContext: user = decoded JWT {sub: username, uid, role, exp},
+ * profile = /auth/me (undefined while loading). the facility name is hidden until the profile has loaded
+ * and for users without a facility.
+ */}
 function AppHeader(){
     const {user, profile, logout} = useAuth();
 
@@ -29,6 +36,7 @@ function AppHeader(){
                         )}
                     </Box>
                 )}
+                {/* two logout controls: a labelled button from sm up, an icon-only button on phones */}
                 <Button color="inherit" startIcon={<LogoutIcon />} onClick={logout} sx={{display: {xs: 'none', sm: 'inline-flex'}}}>
                     Log Out
                 </Button>

@@ -1,12 +1,23 @@
+// "Engineer workload": each engineer's availability and open tickets against their capacity, busiest first,
+// with warnings for stranded and overloaded engineers. answers "which engineers are available, and how is work spread?".
+// renders workload (EngineerLoad[]) from GET /analytics/dashboard. Facility Admins see every engineer in their chosen
+// facilities (rows link to that engineer's tickets); engineers see their own facility's team, with their own row highlighted
 import { Alert, Avatar, Box, LinearProgress, List, ListItem, ListItemButton, Stack, Typography } from '@mui/material';
 import CircleIcon from '@mui/icons-material/Circle';
 import DashboardCard, { EmptyState } from './DashboardCard.jsx';
 import { loadTone } from './dashboardMeta.js';
 
+// "Dana Lee" -> "DL", for the avatar
 const initials = (name) => name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase();
 
+/**
+ * One engineer: avatar, name + availability, specialty and counts, and a capacity bar.
+ *  - engineer: an EngineerLoad from the API
+ *  - facilityName: shown before the specialty when the list spans several facilities
+ */
 function EngineerRow({engineer, rangeLabel, facilityName}) {
     const tone = loadTone(engineer.load_pct);
+    // zero counts are left out (filter(Boolean)); resolved is always shown
     const extras = [
         engineer.blocked && `${engineer.blocked} blocked`,
         engineer.critical_or_high && `${engineer.critical_or_high} critical/high`,
@@ -21,7 +32,7 @@ function EngineerRow({engineer, rangeLabel, facilityName}) {
             <Box sx={{minWidth: 0}}>
                 <Stack direction="row" spacing={1} sx={{alignItems: 'center'}}>
                     <Typography variant="body2" noWrap sx={{fontWeight: 600}}>{engineer.display_name}</Typography>
-                    <Stack direction="row" spacing={0.5} sx={{alignItems: 'center', color: engineer.is_available ? 'success.main' : 'text.disabled'}}>
+                    <Stack direction="row" spacing={0.5} sx={{alignItems: 'center', color: engineer.is_available ? 'success.main' : 'text.disabled'}}>{/* availability: a colored dot plus the word, never color alone */}
                         <CircleIcon sx={{fontSize: 8}} />
                         <Typography variant="caption" color="text.secondary">{engineer.is_available ? 'Available' : 'Unavailable'}</Typography>
                     </Stack>
@@ -40,6 +51,7 @@ function EngineerRow({engineer, rangeLabel, facilityName}) {
                 </Stack>
                 <LinearProgress
                     variant="determinate"
+                    // the bar stops at full; the label above still shows the real count when over capacity
                     value={Math.min(100, engineer.load_pct)}
                     color={tone}
                     sx={{height: 6, borderRadius: 3, bgcolor: 'action.hover'}}
@@ -54,12 +66,15 @@ function EngineerRow({engineer, rangeLabel, facilityName}) {
  * engineer availability + how open work is spread across the team, busiest first.
  * onSelect(engineer) makes a row clickable (admins drill into that engineer's tickets)
  * facilityNames: {id: name}, pass it when the list spans several facilities to label each engineer
+ * highlightUserId: shades that engineer's row (an engineer's own row on their dashboard)
+ * engineers: data.workload, already sorted busiest first (by load_pct) by the backend
  */}
 function WorkloadCard({engineers, rangeLabel, onSelect, highlightUserId, facilityNames}) {
     const available = engineers.filter((e) => e.is_available);
     const totalActive = engineers.reduce((sum, e) => sum + e.active, 0);
     // tickets sitting with someone who can't work on them right now
     const stranded = engineers.filter((e) => !e.is_available && e.active > 0);
+    // same 100% line as loadTone's 'error'
     const overloaded = engineers.filter((e) => e.load_pct >= 100);
 
     return (

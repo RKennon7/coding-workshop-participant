@@ -1,3 +1,6 @@
+// one headline number tile (e.g. "Blocked 3", "Time to resolve 1.2d"), the building block of the dashboard's tile rows.
+// answers "how many / how fast right now?" at a glance. DashboardPage.jsx builds the tiles from the /analytics/dashboard
+// response (current snapshot counts, period.timings, communication); every role sees a row of them
 import { Box, Card, CardActionArea, Stack, Typography } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
@@ -9,6 +12,8 @@ import Delta from './Delta.jsx';
  *  - muted: grey the tile out, e.g. "0 blocked" shouldn't look alarming
  *  - delta: props for <Delta> (change vs the previous period)
  *  - onClick: makes the whole tile a link (drill-down)
+ *  - icon: an MUI icon component (not an element), shown top-right
+ *  - caption: short muted line under the value
  */}
 function StatCard({label, value, icon: Icon, tone = 'primary', muted = false, caption, delta, onClick}) {
     const content = (
@@ -35,7 +40,7 @@ function StatCard({label, value, icon: Icon, tone = 'primary', muted = false, ca
                 <Typography variant="h4" component="p" sx={{fontWeight: 700, color: muted ? 'text.secondary' : 'text.primary'}}>
                     {value}
                 </Typography>
-                {onClick && <ChevronRightIcon fontSize="small" sx={{color: 'text.disabled', alignSelf: 'center'}} />}
+                {/* chevron hints that the tile opens the matching incidents */}{onClick && <ChevronRightIcon fontSize="small" sx={{color: 'text.disabled', alignSelf: 'center'}} />}
             </Stack>
             {caption && <Typography variant="body2" color="text.secondary">{caption}</Typography>}
             {delta && <Delta {...delta} />}

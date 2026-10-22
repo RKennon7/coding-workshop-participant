@@ -1,3 +1,6 @@
+// display formatting for dates and durations, shared by the grids and dashboard cards.
+// all output uses the browser's locale and time zone (the API sends ISO timestamps)
+
 // "Oct 21, 2026, 3:04 PM" in the user's locale, or "" for missing values
 export function formatDateTime(value) {
     if (!value) {
@@ -14,7 +17,8 @@ export function formatDate(value) {
     return new Date(value).toLocaleDateString(undefined, {dateStyle: 'medium'});
 }
 
-// compact duration for stat tiles: "45m", "5.2h", "3.1d"
+// compact duration for stat tiles: "45m", "5.2h", "3.1d". takes hours (the analytics API reports
+// durations as *_hours), "–" for null/undefined e.g. when no tickets reached that milestone yet
 export function formatDuration(hours) {
     if (hours == null) {
         return '–';
@@ -43,4 +47,5 @@ export function formatShortDate(value) {
     return new Date(value).toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
 }
 
+// "2.0" -> "2" (defined last but only called later, once the module has loaded)
 const trimZero = (text) => text.replace(/\.0$/, '');

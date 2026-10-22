@@ -1,3 +1,15 @@
+"""
+Dashboard analytics. URL prefix: /analytics, any logged in user (read only).
+
+One endpoint that answers the dashboard's questions in a single round trip:
+    GET /analytics/dashboard?start=&end=&facility_id=&building_id=&tz=
+    GET /analytics/attention?kind=&facility_id=&building_id=&limit=&offset=   (the "Needs attention" list, paged)
+Everything is limited to the caller's scope: admins see every ticket (or the facilities they pick), engineers the tickets assigned
+to them, employees the tickets they reported. "current" is the live state and ignores the date range;
+"period" only counts tickets created/resolved inside it. The one exception is engineer workload, which
+counts every ticket assigned to each engineer (admins: all/picked facilities, engineers: their own facility).
+Response shapes are in app/schemas/analytics.py.
+"""
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -47,15 +59,6 @@ from app.schemas.analytics import (
 )
 from app.schemas.common import UserSummary
 
-"""
-One endpoint that answers the dashboard's questions in a single round trip:
-    GET /analytics/dashboard?start=&end=&facility_id=&building_id=&tz=
-    GET /analytics/attention?kind=&facility_id=&building_id=&limit=&offset=   (the "Needs attention" list, paged)
-Everything is limited to the caller's scope: admins see every ticket (or the facilities they pick), engineers the tickets assigned
-to them, employees the tickets they reported. "current" is the live state and ignores the date range;
-"period" only counts tickets created/resolved inside it.
-"""
-
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
 S = IncidentStatus
@@ -63,16 +66,18 @@ P = IncidentPriority
 
 # resolve-time targets per priority (wall-clock hours). the frontend reads them from the response
 SLA_TARGET_HOURS: dict[IncidentPriority, float] = {P.CRITICAL: 4, P.HIGH: 24, P.MEDIUM: 72, P.LOW: 120}
-SLA_AT_RISK_FRACTION = 0.75
+SLA_AT_RISK_FRACTION = 0.75  # active ticket past 75% of its target (but not over it) = at risk
 SILENT_AFTER_DAYS = 3        # active ticket with no update the reporter can see
 UNASSIGNED_AFTER_HOURS = 24  # Critical/High are flagged as soon as they're unassigned
 RECURRING_MIN = 2            # same category this many times at one location in the range = recurring
 HOTSPOT_LIMIT = 8
 DAILY_TREND_MAX_DAYS = 62    # longer ranges are bucketed by week
 
+# still being worked. Resolved is not active: it's waiting on the reporter to close or reopen
 ACTIVE = (S.OPEN, S.IN_PROGRESS, S.BLOCKED)
 URGENT = (P.CRITICAL, P.HIGH)
 PRIORITY_RANK = {P.CRITICAL: 0, P.HIGH: 1, P.MEDIUM: 2, P.LOW: 3}
+# attention list order: a ticket ranks by its most serious flag (lower = more urgent)
 FLAG_RANK = {
     AttentionKind.SLA_BREACHED: 0,
     AttentionKind.BLOCKED: 1,
@@ -86,6 +91,8 @@ FLAG_RANK = {
 def _bad_request(detail: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
+# which tickets a role's dashboard covers. note engineers get only their *assigned* tickets here,
+# unlike the incidents list, which also shows tickets they reported
 def _scope_for(user: User) -> tuple[DashboardScope, ColumnElement[bool]]:
     if user.role == UserRole.FACILITY_ADMIN:
         return DashboardScope.ALL, true()
@@ -93,11 +100,13 @@ def _scope_for(user: User) -> tuple[DashboardScope, ColumnElement[bool]]:
         return DashboardScope.ASSIGNED, Incident.assignee_id == user.id
     return DashboardScope.REPORTED, Incident.reporter_id == user.id
 
+# query params without an offset are taken as UTC
 def _as_utc(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
+# half-open [start, end), so back-to-back windows never count a ticket twice. start None = since the beginning
 def _in_range(column, start: datetime | None, end: datetime) -> ColumnElement[bool]:
     return and_(column >= start, column < end) if start is not None else column < end
 
@@ -117,8 +126,11 @@ def _pct(part: int, whole: int) -> float | None:
 
 
 # ---------- "what the reporter has heard" subqueries ----------
-# staff updates = status changes and public notes by anyone other than the ticket's reporter
+# staff updates = status changes and public notes by anyone other than the ticket's reporter.
+# internal notes don't count: the reporter can't see them. each is a correlated scalar subquery,
+# evaluated per Incident row of the outer query
 
+# aggregate is applied to the staff notes' created_at, e.g. func.max for the latest one
 def _staff_note_at(aggregate):
     return (
         select(aggregate(IncidentNote.created_at))
@@ -136,7 +148,7 @@ def _last_staff_status_at():
         select(func.max(IncidentStatusHistory.changed_at))
         .where(
             IncidentStatusHistory.incident_id == Incident.id,
-            IncidentStatusHistory.from_status.is_not(None),
+            IncidentStatusHistory.from_status.is_not(None),  # skip the "created as Open" row
             IncidentStatusHistory.changed_by_id != Incident.reporter_id,
         )
         .correlate(Incident)
@@ -161,6 +173,13 @@ def _last_staff_note_body():
 # ---------- live tickets: snapshot, attention list, my tickets ----------
 
 def _flags(incident: Incident, scope: DashboardScope, age_hours: float, idle_hours: float) -> list[AttentionFlag]:
+    """Why a live ticket needs attention (empty list = it doesn't).
+
+    Resolved tickets only get AWAITING_REPORTER, and only on the reporter's own dashboard. Active
+    tickets can get several: SLA_BREACHED (older than its priority's target), BLOCKED, ESCALATED,
+    UNASSIGNED (Critical/High straight away, others after UNASSIGNED_AFTER_HOURS) and SILENT (no
+    staff update the reporter can see for SILENT_AFTER_DAYS). Ages are wall-clock hours since creation.
+    """
     flags: list[AttentionFlag] = []
     if incident.status == S.RESOLVED:
         if scope == DashboardScope.REPORTED:
@@ -181,6 +200,12 @@ def _flags(incident: Incident, scope: DashboardScope, age_hours: float, idle_hou
     return flags
 
 async def _live_tickets(db: AsyncSession, where: list, scope: DashboardScope, now: datetime) -> list[TicketSummary]:
+    """Every active or Resolved ticket matching `where` (ignores the date range), with its flags.
+
+    Loaded into Python rather than counted in SQL because the flag rules, snapshot counts and the
+    attention list all need the same per-ticket view. Location, people and the latest staff update
+    come back in the same query (joinedloads + correlated subqueries), so there's no N+1.
+    """
     last_note_at = _staff_note_at(func.max)
     last_status_at = _last_staff_status_at()
     query = (
@@ -196,6 +221,7 @@ async def _live_tickets(db: AsyncSession, where: list, scope: DashboardScope, no
     )
     tickets = []
     for incident, note_at, status_at, note_body in (await db.execute(query)).all():
+        # a ticket nobody has touched yet counts as updated when it was created
         last_update_at = max(t for t in (incident.created_at, note_at, status_at) if t is not None)
         age_hours = (now - incident.created_at).total_seconds() / 3600
         idle_hours = (now - last_update_at).total_seconds() / 3600
@@ -223,6 +249,7 @@ async def _live_tickets(db: AsyncSession, where: list, scope: DashboardScope, no
         ))
     return tickets
 
+# the "right now" tiles, counted from the live tickets
 def _snapshot(tickets: list[TicketSummary]) -> CurrentSnapshot:
     active = [t for t in tickets if t.status in ACTIVE]
     by_status = {s: 0 for s in (*ACTIVE, S.RESOLVED)}
@@ -242,12 +269,15 @@ def _snapshot(tickets: list[TicketSummary]) -> CurrentSnapshot:
         awaiting_reporter=by_status[S.RESOLVED],
     )
 
+# most serious flag first, then priority, then oldest first. only called on tickets that have flags
 def _attention_sort_key(t: TicketSummary):
     return (min(FLAG_RANK[f.kind] for f in t.flags), PRIORITY_RANK[t.priority], -t.age_hours)
 
 
 # ---------- inside the date range ----------
 
+# median of an interval column in hours, plus how many rows it covers. count() and percentile_cont
+# skip NULLs, so tickets that haven't reached that point yet (e.g. never assigned) are left out
 async def _median_hours(db: AsyncSession, delta, where: list) -> tuple[float | None, int]:
     seconds = func.extract("epoch", delta)
     query = select(func.percentile_cont(0.5).within_group(seconds), func.count(seconds)).where(*where)
@@ -255,6 +285,12 @@ async def _median_hours(db: AsyncSession, delta, where: list) -> tuple[float | N
     return _hours(median), count
 
 async def _timings(db: AsyncSession, where: list, start, end, previous_start) -> Timings:
+    """Median time from creation to acknowledge/assign/resolve, for this window and the previous one.
+
+    Acknowledge and assign cover tickets created in the window; resolve covers tickets resolved in it.
+    resolved_at is cleared on reopen, so a reopened ticket only counts once it's resolved again, and
+    assigned_at is restamped on reassignment, so "assign" is time to the current assignee.
+    """
     measures = {
         # (time from creation to ..., counted for tickets that ...)
         "acknowledge": (Incident.acknowledged_at, Incident.created_at),
@@ -275,6 +311,8 @@ def _sla_target_seconds():
     # explicit comparisons, so the enum is bound through the column's type (case(value=...) sends the raw value)
     return case(*((Incident.priority == p, hours * 3600) for p, hours in SLA_TARGET_HOURS.items()))
 
+# per priority: (tickets resolved in the window, how many of those were resolved within their target).
+# met = resolved_at - created_at <= the priority's target, wall-clock (no business hours)
 async def _sla_rows(db: AsyncSession, where: list, start, end) -> dict[IncidentPriority, tuple[int, int]]:
     seconds = func.extract("epoch", Incident.resolved_at - Incident.created_at)
     query = (
@@ -284,6 +322,7 @@ async def _sla_rows(db: AsyncSession, where: list, start, end) -> dict[IncidentP
     )
     return {priority: (resolved, met) for priority, resolved, met in (await db.execute(query)).all()}
 
+# SLA met % for the window (and the previous one for the trend arrow), with a row for every priority even if 0
 async def _sla(db: AsyncSession, where: list, start, end, previous_start) -> SlaStats:
     rows = await _sla_rows(db, where, start, end)
     resolved = sum(r for r, _ in rows.values())
@@ -303,11 +342,19 @@ async def _sla(db: AsyncSession, where: list, start, end, previous_start) -> Sla
         ],
     )
 
+# ticket count per value of an enum column, biggest first
 async def _counts_by(db: AsyncSession, column, where: list) -> list[CountItem]:
     query = select(column, func.count()).where(*where).group_by(column).order_by(func.count().desc())
     return [CountItem(key=value.value, count=count) for value, count in (await db.execute(query)).all()]
 
 async def _trend(db: AsyncSession, where: list, start, end, tz: str) -> tuple[str, list[TrendPoint]]:
+    """Tickets created and resolved per day (or per week for long ranges), in the viewer's time zone.
+
+    Returns ("day" | "week", points). Postgres buckets with date_trunc(unit, ts, tz), which returns the
+    bucket's local midnight as a timestamptz; Python then walks the same local midnights and matches
+    them by epoch seconds, filling empty buckets with 0. For an all-time range the trend starts at the
+    first ticket in scope.
+    """
     if start is None:
         first = await db.scalar(select(func.min(Incident.created_at)).where(*where))
         start = first or end
@@ -338,6 +385,12 @@ async def _trend(db: AsyncSession, where: list, start, end, tz: str) -> tuple[st
     return bucket, points
 
 async def _hotspots(db: AsyncSession, where: list) -> Hotspots:
+    """The buildings, floors and seats with the most tickets matching `where`, top HOTSPOT_LIMIT each.
+
+    Each row also has how many of those are still active and its most reported category; recurring
+    means that category came up at least RECURRING_MIN times there. Tickets without a floor/seat
+    simply don't count towards the floor/seat lists.
+    """
     active = func.count().filter(Incident.status.in_(ACTIVE))
 
     # every level is joined through its building + facility, so rows can say which campus they're on
@@ -385,6 +438,8 @@ async def _hotspots(db: AsyncSession, where: list) -> Hotspots:
         seats=await ranked(Seat.id, floor_label + literal(" · ") + Seat.code, floor_join, (Seat, Seat.id == Incident.seat_id)),
     )
 
+# everything that depends on the date range. counts, breakdowns and hotspots use tickets created in it;
+# resolved/closed/SLA/resolve time use tickets resolved/closed in it
 async def _period(db: AsyncSession, where: list, start, end, previous_start, tz: str) -> PeriodStats:
     created_in = [*where, _in_range(Incident.created_at, start, end)]
 
@@ -413,6 +468,13 @@ async def _period(db: AsyncSession, where: list, start, end, previous_start, tz:
 # ---------- engineer workload (not limited to the caller's tickets) ----------
 
 async def _workload(db: AsyncSession, start, end, facility_ids: list[int] | None) -> list[EngineerLoad]:
+    """Load per active engineer with a profile, busiest first (by active tickets / max_open_tickets).
+
+    Deliberately ignores the caller's ticket scope and the building filter: it counts every ticket
+    assigned to each engineer, so an engineer sees the whole team at their facility. facility_ids
+    filters by the engineer's home facility. Only resolved_in_range uses the date range.
+    """
+    # one row of counts per assignee, outer joined so engineers with no tickets still show with zeros
     load = (
         select(
             Incident.assignee_id.label("user_id"),
@@ -456,7 +518,7 @@ async def _workload(db: AsyncSession, start, end, facility_ids: list[int] | None
 def _scope_where(user: User, facility_id: list[int] | None, building_id: int | None) -> tuple[DashboardScope, list, list[int] | None]:
     scope, scope_filter = _scope_for(user)
     where = [scope_filter]
-    # admins may narrow to some facilities. engineers/employees are already limited to their own tickets,
+    # admins may narrow to some facilities. filters are only ever ANDed on, so they can't widen the scope. engineers/employees are already limited to their own tickets,
     # and their team workload to their own facility
     facility_ids = visible_facility_ids(user, facility_id)
     if scope == DashboardScope.ALL and facility_ids is not None:
@@ -484,7 +546,12 @@ async def get_attention(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> AttentionPage:
-    """flagged tickets, most urgent first, one page at a time"""
+    """Flagged tickets ("Needs attention"), most urgent first, one page at a time. Any logged in user.
+
+    Limited to the caller's scope (admins: all or the picked facilities, engineers: assigned to them,
+    employees: reported by them). Live state, so there is no date range. `kind` keeps only tickets with
+    that flag; `total` counts the filtered list, while `counts` always covers every flagged ticket.
+    """
     scope, where, _ = _scope_where(current_user, facility_id, building_id)
     tickets = await _live_tickets(db, where, scope, datetime.now(timezone.utc))
     flagged = [t for t in tickets if t.flags and (kind is None or any(f.kind == kind for f in t.flags))]
@@ -501,7 +568,16 @@ async def get_dashboard(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Dashboard:
-    """the attention list's counts are here; the list itself is paged by GET /analytics/attention"""
+    """Everything the dashboard shows, in one call. Any logged in user, limited to their scope.
+
+    Scope: admins see all tickets (or the facilities in facility_id), engineers the tickets assigned
+    to them, employees the ones they reported. `current` is the live state; `period` covers
+    [start, end) and is compared with the same-length window just before it. Employees also get
+    `my_tickets`; admins and engineers get engineer `workload`. The attention list's counts are here;
+    the list itself is paged by GET /analytics/attention.
+
+    - 400: unknown tz, or start not before end
+    """
     try:
         ZoneInfo(tz)
     except (ZoneInfoNotFoundError, ValueError):
@@ -527,6 +603,7 @@ async def get_dashboard(
         sla_targets_hours=SLA_TARGET_HOURS,
         current=_snapshot(tickets),
         attention_counts=_attention_counts(tickets),
+        # resolved tickets first (they're waiting on the employee), then most recently updated
         my_tickets=(
             sorted(tickets, key=lambda t: (t.status != S.RESOLVED, -t.last_update_at.timestamp()))
             if scope == DashboardScope.REPORTED else None

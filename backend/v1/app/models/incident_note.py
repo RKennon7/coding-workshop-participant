@@ -1,3 +1,4 @@
+"""IncidentNote model: the comment thread on a ticket."""
 from datetime import datetime
 
 from app.models.base import Base
@@ -5,6 +6,11 @@ from sqlalchemy import DateTime, ForeignKey, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 class IncidentNote(Base):
+    """A note on an incident (table `incident_notes`). Deleted along with its incident (ON DELETE CASCADE).
+
+    Internal notes (is_internal=True) can only be written and read by engineers and admins; the
+    incidents router filters them out for employees.
+    """
     __tablename__ = "incident_notes"
 
     id: Mapped[int] = mapped_column(primary_key=True)

@@ -1,8 +1,14 @@
+// login screen, shown by App.jsx to anyone who isn't logged in (all roles use the same form).
+// accepts a username or an email. on success AuthContext stores the JWT and App switches to MainLayout.
 import { useState } from 'react';
 import { Alert, Box, Button, Divider, Link, Paper, TextField, Typography} from '@mui/material';
 import { useAuth } from '../../context/AuthContext.jsx';
 
-{/** extracts the login function from global AuthContext. onShowRegister switches to the RegisterForm */}
+{/**
+ * Login form. Uses login() from the global AuthContext (POST /auth/token, OAuth2 password form).
+ *  - onShowRegister: switches App to the RegisterForm (first-time account setup)
+ * shows an info banner when the previous session expired (token exp reached or the API returned 401)
+ */}
 function LoginForm({onShowRegister}){
     const {login, sessionExpired} = useAuth();
     const [username, setUsername] = useState('');
@@ -10,13 +16,15 @@ function LoginForm({onShowRegister}){
     const [error, setError] = useState(null);
 
 
-    {/** form submission handler function */}
+    {/** form submission handler function. on success there's nothing to do here: App re-renders into MainLayout */}
     const handleSubmit = async (event) => {
         event.preventDefault();
         setError(null);
         try{
             await login(username.trim(), password);
         } catch {
+            // one generic message, like the backend's 401 (which doesn't say whether the user exists or
+            // just hasn't registered yet). note this also covers network/server errors
             setError('Incorrect username or password');
         }
     };
@@ -27,6 +35,7 @@ function LoginForm({onShowRegister}){
                 <Typography variant="h6" gutterBottom>
                     Acme Login
                 </Typography>
+                {/* the expiry notice gives way to the login error once the user has tried again */}
                 {sessionExpired && !error && (
                     <Alert severity="info" sx={{mb: 2}}>Your session has expired. Please log in again.</Alert>
                 )}

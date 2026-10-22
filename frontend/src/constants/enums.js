@@ -1,3 +1,8 @@
+/**
+ * Fixed value lists shared by forms, filters and grid columns, plus the chip color for each value.
+ * The strings are sent to / received from the API as-is, so they must match the backend exactly.
+ */
+
 // mirrors the enums in backend/v1/app/models (incident.py, user.py)
 
 export const INCIDENT_STATUSES = ['Open', 'In Progress', 'Blocked', 'Resolved', 'Closed'];
@@ -16,7 +21,7 @@ export const INCIDENT_CATEGORIES = [
 ];
 export const USER_ROLES = ['Facility Admin', 'Engineer', 'Employee'];
 
-// MUI Chip colors for each value
+// MUI Chip colors for each value (used by components/common/EnumChip.jsx)
 export const STATUS_COLORS = {
     'Open': 'info',
     'In Progress': 'primary',

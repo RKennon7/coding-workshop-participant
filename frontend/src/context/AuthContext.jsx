@@ -1,3 +1,9 @@
+/**
+ * Login state for the whole app. AuthProvider (mounted in App.jsx) owns the JWT access token,
+ * keeps it in localStorage under 'accessToken' (api/client.js reads it from there for every request)
+ * and decodes it into `user`. Components read it with useAuth(); permission checks go through
+ * hooks/usePermissions.js, which uses user.role.
+ */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import apiClient, { setUnauthorizedHandler } from "../api/client";
 import { registerAccount } from "../services/index.js";
@@ -8,7 +14,8 @@ import { registerAccount } from "../services/index.js";
 
 const AuthContext = createContext(null);
 
-// extract + decode user payload from JWT, returns null if the token is malformed
+// extract + decode user payload from JWT, returns null if the token is malformed.
+// this only reads the claims for display/UI gating, it doesn't verify the signature: the backend does that
 function decodeToken(token){
     try {
         // JWTs are base64url encoded, convert to regular base64 before decoding
@@ -20,7 +27,8 @@ function decodeToken(token){
     }
 }
 
-// exp claim is in seconds since epoch, Date.now() is in ms
+// exp claim is in seconds since epoch, Date.now() is in ms.
+// an undecodable token counts as expired; a token without exp never expires here
 function isExpired(payload){
     return !payload || (payload.exp && payload.exp * 1000 <= Date.now());
 }
@@ -35,9 +43,13 @@ function loadStoredToken(){
     return stored;
 }
 
-// AuthProvider wraps the app and manages authentication state
+/**
+ * AuthProvider wraps the app and manages authentication state.
+ * Provides {token, user, profile, isAuthenticated, sessionExpired, login, register, logout} to useAuth().
+ * Logs the user out automatically when the token expires or the backend answers a request with 401.
+ */
 export function AuthProvider({children}) {
-    // init token state from local storage
+    // init token state from local storage (the function form runs loadStoredToken only on the first render)
     const [token, setToken] = useState(loadStoredToken);
     // lets the login screen explain why the user was sent back to it
     const [sessionExpired, setSessionExpired] = useState(false);
@@ -71,7 +83,9 @@ export function AuthProvider({children}) {
         setToken(accessToken);
     };
 
-    // username can be either the username or the email
+    // username can be either the username or the email.
+    // POST /auth/token is FastAPI's OAuth2 password flow, which expects form fields rather than JSON.
+    // a failed login rejects with the axios error, so the login form can show the message
     const login = async (username, password) => {
         const formData = new URLSearchParams();
         formData.append('username', username);
@@ -89,11 +103,13 @@ export function AuthProvider({children}) {
         storeToken(data.access_token);
     };
 
+    // useCallback keeps these stable so the timer/handler effects below don't re-run every render
     const logout = useCallback(() => {
         localStorage.removeItem('accessToken');
         setToken(null);
     }, []);
 
+    // logout + flag it, so the login screen says the session expired rather than nothing
     const expireSession = useCallback(() => {
         setSessionExpired(true);
         logout();
@@ -122,8 +138,13 @@ export function AuthProvider({children}) {
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-// custom react hook to expose AuthContext to any component
-// simplifies context usage in child react components
+/**
+ * Custom react hook to expose AuthContext to any component.
+ * Simplifies context usage in child react components, and throws if used outside AuthProvider
+ * so a missing provider fails loudly instead of returning null.
+ * @returns {{token, user, profile, isAuthenticated, sessionExpired, login, register, logout}}
+ *   user is the decoded JWT ({sub, uid, role, exp}); profile is GET /auth/me (undefined while loading)
+ */
 export function useAuth() {
     const context = useContext(AuthContext);
     if (context === null){

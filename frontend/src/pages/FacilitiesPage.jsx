@@ -1,3 +1,8 @@
+/**
+ * The Facilities tab: one sub-tab per level of the location hierarchy (Facility > Building > Floor > Seat),
+ * each a ResourceView grid, plus the "Set up facility" wizard that creates a whole campus in one call.
+ * Engineers see it read-only (facilities:view); only admins (facilities:manage) can change anything.
+ */
 import { useMemo, useState } from 'react';
 import { Alert, Box, Button, Snackbar, Stack, Tab, Tabs } from '@mui/material';
 import AddBusinessIcon from '@mui/icons-material/AddBusiness';
@@ -33,6 +38,7 @@ function deleteDetails(path, getLabel) {
                 ),
             };
         }
+        // only list what sits *below* this level (a building's delete doesn't count other buildings)
         const contents = [
             impact.buildings && (path === '/facilities') && plural(impact.buildings, 'building'),
             impact.floors && path !== '/floors' && plural(impact.floors, 'floor'),
@@ -56,9 +62,11 @@ function deleteDetails(path, getLabel) {
     };
 }
 
+// is_active is the alternative to deleting a location that already has incidents (see deleteDetails above)
 const activeColumn = {field: 'is_active', headerName: 'Active', width: 90, type: 'boolean'};
 const activeField = {name: 'is_active', label: 'Active', type: 'checkbox', defaultValue: true};
 
+// top level: facilities (campuses) have no parent
 function FacilitiesView() {
     const columns = useMemo(() => [
         {field: 'id', headerName: 'ID', width: 70},
@@ -109,6 +117,7 @@ function ChildView({title, singular, service, path, parent, labelField = 'name'}
     );
 }
 
+// render() builds the view lazily, so only the selected sub-tab's grid (and its requests) is mounted
 const SUB_TABS = [
     {label: 'Facilities', render: () => <FacilitiesView />},
     {
@@ -128,6 +137,7 @@ const SUB_TABS = [
     },
 ];
 
+/** Facilities page: sub-tab switcher, setup wizard button (admins only) and a success toast after setup. */
 function FacilitiesPage() {
     const {can} = usePermissions();
     const [tab, setTab] = useState(0);
@@ -135,6 +145,7 @@ function FacilitiesPage() {
     const [toast, setToast] = useState(null);
     // bumped after a bulk setup so the grids reload with the new rows
     const [version, setVersion] = useState(0);
+    // the wizard can add buildings to an existing facility, so it needs the list. only loaded once it's opened
     const facilityOptions = useOptions(facilitiesService, (f) => f.name, {enabled: setupOpen});
 
     const handleCreated = ({facility, buildings, floors, seats}) => {
@@ -155,6 +166,7 @@ function FacilitiesPage() {
                     </Button>
                 )}
             </Stack>
+            {/* changing the key remounts the grid, so it refetches after a bulk setup */}
             <Box key={version}>{SUB_TABS[tab].render()}</Box>
 
             {setupOpen && (

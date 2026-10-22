@@ -1,14 +1,22 @@
+// "first day" account setup screen, reached from the link on LoginForm (logged-out users of any role).
+// registration is invite-only: a Facility Admin creates the user (email, role, campus) first, and here
+// the new user just claims that account by choosing a password.
 import { useState } from 'react';
 import { Alert, Box, Button, Divider, Link, Paper, TextField, Typography } from '@mui/material';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { getErrorMessage } from '../../hooks/useResource.js';
 
+// mirrors NewPassword (min_length=8) in backend/v1/app/schemas/common.py. the backend also caps passwords
+// at 72 bytes (bcrypt's limit), that one is only checked server side
 const MIN_PASSWORD_LENGTH = 8;
 
 {/**
- * first-time setup for an account a Facility Admin already created (POST /auth/register).
+ * First-time setup for an account a Facility Admin already created (POST /auth/register).
  * the user proves nothing beyond knowing the invited email, then picks their own password.
  * on success the backend returns a token, so they land straight in the app.
+ *  - onShowLogin: switches App back to the LoginForm
+ * the backend rejects emails outside @acme.inc, emails with no invited account, and accounts that
+ * are already registered; those messages are shown as-is in the error banner.
  */}
 function RegisterForm({onShowLogin}) {
     const {register} = useAuth();
@@ -18,6 +26,7 @@ function RegisterForm({onShowLogin}) {
     const [error, setError] = useState(null);
     const [saving, setSaving] = useState(false);
 
+    // only flag these once the user has typed something, so an empty form doesn't start out red
     const passwordTooShort = password.length > 0 && password.length < MIN_PASSWORD_LENGTH;
     const mismatch = confirm.length > 0 && confirm !== password;
 
@@ -29,6 +38,8 @@ function RegisterForm({onShowLogin}) {
         setSaving(true);
         setError(null);
         try {
+            // the email is lowercased and domain-checked by the backend (AcmeEmail in schemas/common.py).
+            // success logs the user in and App unmounts this form, so saving is only reset on failure
             await register(email.trim(), password);
         } catch (err) {
             setError(getErrorMessage(err));

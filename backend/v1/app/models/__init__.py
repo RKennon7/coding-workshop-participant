@@ -1,4 +1,8 @@
-# import every model so they're all registered on Base.metadata before create_all / mapper configuration
+"""ORM models package. The rest of the app imports models from here (`from app.models import User`).
+
+Import every model so they're all registered on Base.metadata before create_all / mapper configuration
+(relationships refer to each other by class name strings, which only resolve once all classes are loaded).
+"""
 from app.models.base import Base
 from app.models.user import User, UserRole
 from app.models.facility import Facility

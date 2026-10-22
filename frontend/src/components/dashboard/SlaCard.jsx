@@ -1,3 +1,7 @@
+// "Resolution SLA": how many tickets resolved in the range met their priority's target time, overall (gauge)
+// and per priority (bars). answers "how quickly are incidents resolved?". renders period.sla (SlaStats) plus
+// current.sla_breached from GET /analytics/dashboard. targets come from SLA_TARGET_HOURS in
+// backend/v1/app/routers/analytics.py (Critical 4h, High 24h, Medium 72h, Low 120h). Facility Admin and Engineer dashboards
 import { Box, LinearProgress, Link, Stack, Typography } from '@mui/material';
 import { Gauge, gaugeClasses } from '@mui/x-charts/Gauge';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -10,10 +14,16 @@ import { successTone } from './dashboardMeta.js';
 import { PRIORITY_COLORS } from '../../constants/enums.js';
 import { formatDuration } from '../../utils/format.js';
 
+// the headline status is an icon + words, not just the gauge color. 'default' (nothing resolved yet) has no entry, so no headline
 const TONE_ICON = {success: CheckCircleIcon, warning: WarningAmberIcon, error: ReportOutlinedIcon};
 const TONE_LABEL = {success: 'On target', warning: 'Slipping', error: 'Off target'};
 
-{/** share of tickets resolved within their priority's target time, overall + per priority */}
+{/**
+ * share of tickets resolved within their priority's target time, overall + per priority
+ *  - sla: period.sla, counts for tickets resolved in the range (previous_met_pct for the trend line, shown in percentage points)
+ *  - current: the live snapshot, for the "N open tickets are past target now" link
+ *  - onShowBreached: called by that link (the dashboard filters Needs attention to SLA breached)
+ */}
 function SlaCard({sla, current, rangeLabel, compareTo, onShowBreached}) {
     const tone = successTone(sla.met_pct);
     const ToneIcon = TONE_ICON[tone];
@@ -23,6 +33,7 @@ function SlaCard({sla, current, rangeLabel, compareTo, onShowBreached}) {
             <Stack direction={{xs: 'column', sm: 'row'}} spacing={2} sx={{alignItems: {xs: 'flex-start', sm: 'center'}}}>
                 <Box sx={{width: 132, height: 132, flexShrink: 0, alignSelf: 'center'}}>
                     <Gauge
+                        // grey arc and a '–' when there's nothing to measure yet
                         value={sla.met_pct ?? 0}
                         startAngle={-110}
                         endAngle={110}
@@ -59,6 +70,7 @@ function SlaCard({sla, current, rangeLabel, compareTo, onShowBreached}) {
 
             <Stack spacing={1.25} sx={{mt: 2}}>
                 {sla.by_priority.map((row) => {
+                    // the backend sends counts per priority; the percentage (and its color) is worked out here
                     const pct = row.resolved ? (100 * row.met) / row.resolved : null;
                     const rowTone = successTone(pct);
                     return (
@@ -68,6 +80,7 @@ function SlaCard({sla, current, rangeLabel, compareTo, onShowBreached}) {
                                 <LinearProgress
                                     variant="determinate"
                                     value={pct ?? 0}
+                                    // with nothing resolved, 'inherit' takes the grey from sx color below
                                     color={rowTone === 'default' ? 'inherit' : rowTone}
                                     sx={{height: 6, borderRadius: 3, bgcolor: 'action.hover', color: 'text.disabled'}}
                                     aria-label={`${row.priority} SLA met`}

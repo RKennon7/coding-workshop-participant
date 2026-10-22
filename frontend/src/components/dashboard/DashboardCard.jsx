@@ -1,6 +1,8 @@
+// the shared card frame every dashboard section sits in (title, optional subtitle and top-right action),
+// plus EmptyState for sections with no data. pure layout: renders no /analytics data itself. used on all roles' dashboards
 import { Box, Card, Stack, Typography } from '@mui/material';
 
-{/** titled panel for one dashboard section. action sits top-right (e.g. a toggle) */}
+{/** titled panel for one dashboard section. action sits top-right (e.g. a toggle) and wraps under the title on narrow cards */}
 function DashboardCard({title, subtitle, action, children, sx}) {
     return (
         <Card sx={{height: '100%', display: 'flex', flexDirection: 'column', ...sx}}>

@@ -1,3 +1,7 @@
+// conversation thread on one incident, rendered under the incident edit/view form (IncidentsPage's renderFormExtras).
+// every role can read and add public notes. engineers and admins can also see and write *internal* notes,
+// which are hidden from employees. the backend enforces all of this in the notes endpoints of
+// backend/v1/app/routers/incidents.py, the checks here only decide what to show.
 import { useMemo, useState } from 'react';
 import {
     Alert, Box, Button, Checkbox, Chip, Divider, FormControlLabel, IconButton, Stack, TextField, Tooltip, Typography,
@@ -11,7 +15,13 @@ import { PERMISSIONS } from '../../auth/permissions.js';
 import { formatDateTime } from '../../utils/format.js';
 import Can from '../auth/Can.jsx';
 
-{/** notes thread shown inside the incident form: list + add note. closed tickets only take notes from admins */}
+{/**
+ * Notes thread shown inside the incident form: list + add note. Closed tickets only take notes from admins.
+ *  - incidentId: loads GET /incidents/{id}/notes (oldest first) and posts new notes to the same path
+ *  - closed: true when the ticket's status is Closed (mirrors the backend's 400 for non-admins)
+ * authors can delete their own notes and admins can delete anyone's (no confirmation step).
+ * notes are added with a plain button, not a nested form, see handleAdd.
+ */}
 function IncidentNotes({incidentId, closed = false}) {
     const {user} = useAuth();
     const {can} = usePermissions();
@@ -38,7 +48,7 @@ function IncidentNotes({incidentId, closed = false}) {
         }
     };
 
-    // backend should already filter these out for employees, this is a second safety net
+    // the backend already filters internal notes out for employees (list_notes), this is a second safety net
     const notes = canSeeInternal ? rows : rows.filter((note) => !note.is_internal);
 
     // the note form sits inside the incident <form>, so it can't be a nested <form> itself
@@ -75,6 +85,7 @@ function IncidentNotes({incidentId, closed = false}) {
                                 {formatDateTime(note.created_at)}
                             </Typography>
                             {note.is_internal && <Chip label="Internal" size="small" color="warning" variant="outlined" />}
+                            {/* same rule as the backend's delete_note: the author (uid from the JWT) or an admin */}
                             {(note.author_id === user?.uid || isAdmin) && (
                                 <Tooltip title="Delete note">
                                     <IconButton size="small" onClick={() => handleDelete(note.id)} sx={{ml: 'auto'}} aria-label="Delete note">
@@ -94,6 +105,7 @@ function IncidentNotes({incidentId, closed = false}) {
                     This incident is closed, so no more notes can be added.
                 </Typography>
             )}
+            {/* all three roles currently have INCIDENT_NOTES_CREATE, Can keeps it in sync with auth/permissions.js */}
             {canAdd && <Can permission={PERMISSIONS.INCIDENT_NOTES_CREATE}>
                 <Stack spacing={1}>
                     <TextField
@@ -106,6 +118,7 @@ function IncidentNotes({incidentId, closed = false}) {
                         disabled={saving}
                     />
                     <Stack direction="row" sx={{justifyContent: 'space-between', alignItems: 'center'}}>
+                        {/* only engineers/admins get the internal toggle. the empty span keeps the button right-aligned */}
                         {canSeeInternal ? (
                             <FormControlLabel
                                 label="Internal (hidden from employees)"

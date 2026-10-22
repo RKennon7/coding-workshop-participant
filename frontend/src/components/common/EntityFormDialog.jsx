@@ -1,3 +1,7 @@
+// generic add/edit dialog built from a list of field definitions, so each page only declares its fields.
+// used through ResourceView for incidents, facilities/buildings/floors/seats, engineers and users, by every role.
+// which inputs are enabled is decided by the caller (isFieldEditable), but that is only UX:
+// the backend validates every payload and rejects fields the user may not change.
 import { useState } from 'react';
 import {
     Alert, Button, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle,
@@ -6,15 +10,21 @@ import {
 import { getErrorMessage } from '../../hooks/useResource.js';
 
 {/**
- * add/edit form generated from a list of field definitions:
+ * Add/edit form generated from a list of field definitions:
  *   {name, label, type: 'text'|'textarea'|'number'|'email'|'password'|'select'|'checkbox',
  *    options: [{value, label}] or (values, initialValues) => options, required (bool or (values) => bool),
- *    hideOnCreate, createOnly, hidden: (values) => bool, dependsOn: 'otherFieldName'}
+ *    hideOnCreate, createOnly, hidden: (values) => bool, dependsOn: 'otherFieldName',
+ *    defaultValue, helperText}
+ * (ResourceView also reads an editableBy key on fields, this component ignores it)
  * isFieldEditable(field) decides which inputs are enabled, so the same form works for
  * full edits, partial edits (e.g. engineers changing status) and read-only viewing.
- * onSubmit receives the values of the editable fields only. children render under the fields.
+ * if no visible field is editable the form is read-only: no submit button, Cancel becomes Close.
+ * onSubmit receives the values of the editable fields only, converted for the API (see toApiValue).
+ * if it throws, the dialog stays open and shows the error. children render under the fields.
+ * the initial values are read once on mount, so the parent remounts it (key) to load a different row.
  */}
 
+// value a field starts with when the row doesn't have one
 function emptyValue(field) {
     if (field.defaultValue !== undefined) {
         return field.defaultValue;
@@ -33,6 +43,7 @@ function toApiValue(field, value) {
     return field.type === 'number' ? Number(value) : value;
 }
 
+// whether a field is shown in this mode. hidden fields are also left out of the submitted payload
 export function isFieldVisible(field, mode, values) {
     if (mode === 'create' && field.hideOnCreate) return false;
     if (mode === 'edit' && field.createOnly) return false;
@@ -105,6 +116,7 @@ function EntityFormDialog({
             );
         }
 
+        // options can depend on the current values, e.g. only the floors of the selected building
         const options = typeof field.options === 'function' ? field.options(values, initialValues) : field.options;
         const required = typeof field.required === 'function' ? field.required(values) : field.required;
         return (
@@ -115,6 +127,7 @@ function EntityFormDialog({
                 type={['number', 'email', 'password'].includes(field.type) ? field.type : 'text'}
                 value={value ?? ''}
                 onChange={(e) => setValue(field.name, e.target.value)}
+                // locked inputs aren't the user's to fill in, so they don't show the required asterisk
                 required={required && !disabled}
                 disabled={disabled}
                 select={field.type === 'select'}
@@ -124,6 +137,7 @@ function EntityFormDialog({
                 fullWidth
             >
                 {field.type === 'select' && [
+                    // optional selects get a "None" entry so the value can be cleared (sent as null)
                     !required && <MenuItem key="__none" value=""><em>None</em></MenuItem>,
                     ...(options ?? []).map((option) => (
                         <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
@@ -136,9 +150,11 @@ function EntityFormDialog({
     return (
         <Dialog
             open={open}
+            // can't be dismissed (backdrop/Escape) while a save is in flight
             onClose={saving ? undefined : onClose}
             maxWidth="sm"
             fullWidth
+            // the dialog paper is the <form>, so Enter submits and the browser checks required fields first
             slotProps={{paper: {component: 'form', onSubmit: handleSubmit}}}
         >
             <DialogTitle>{title}</DialogTitle>

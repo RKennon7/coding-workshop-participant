@@ -1,3 +1,13 @@
+"""
+Authentication: logging in, claiming an invited account, and the caller's own profile.
+
+URL prefix: /auth (served under /api/v1 in AWS). /token and /register are public; /me and
+/change-password need a valid bearer token, any role.
+
+Accounts are invite-only: a Facility Admin creates the user (POST /users) and the user then picks
+their own password here via /register. Tokens are JWTs signed with HS256 (see app/security.py) and
+are checked on every request by get_current_user in app/dependencies.py.
+"""
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import or_, select
@@ -12,6 +22,13 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 # uid lets the frontend tell which incidents/notes/profiles belong to the logged in user
 def _token_for(user: User) -> Token:
+    """Issue a bearer token for a user.
+
+    The payload carries sub (username), uid (user id) and role. Only uid is trusted by the backend
+    to identify the caller (usernames can change); sub/role are there for the frontend to display
+    and to hide UI the role can't use. The role is re-read from the db on every request, so a
+    role change takes effect without a new token.
+    """
     access_token = create_access_token(data={"sub": user.username, "uid": user.id, "role": user.role.value})
     return Token(access_token=access_token, token_type="bearer")
 
@@ -21,7 +38,13 @@ async def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
 ) -> Token:
-    # find user in the db:
+    """Log in and get a bearer token. Public.
+
+    Takes an OAuth2 password form (`username`, `password`); `username` may be the username or the
+    email. Returns 401 with the same message whether the user is unknown, not yet registered,
+    deactivated, or the password is wrong, so the response doesn't reveal which accounts exist.
+    """
+    # find user in the db. emails are stored lowercased (see AcmeEmail), usernames match exactly
     login_name = form_data.username.strip()
     result = await db.execute(
         select(User).where(or_(User.username == login_name, User.email == login_name.lower()))
@@ -41,16 +64,24 @@ async def login(
 
     return _token_for(user)
 
-# public endpoint: a new user claims the account a Facility Admin created for their email
-# by choosing their own password. returns a token so they're logged in straight away.
 @router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
 async def register(
     payload: RegisterRequest,
     db: AsyncSession = Depends(get_db),
 ) -> Token:
+    """Claim an invited account by choosing a password. Public.
+
+    A Facility Admin must first have created a user for this @acme.inc email without a password.
+    Setting the password is what "registers" the account; a token is returned so the user is logged
+    in straight away.
+
+    - 400: no active account exists for this email (ask an admin to add you)
+    - 409: the account already has a password (log in instead)
+    """
     result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
 
+    # deactivated accounts get the same answer as unknown ones
     if user is None or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -71,6 +102,11 @@ async def read_me(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> CurrentUserRead:
+    """The logged in user's own account, plus their facility's name for the app header. Any role.
+
+    This is how employees and engineers see their own profile; the /users endpoints are admin only.
+    `facility_name` is null for an admin without a home facility.
+    """
     facility = await db.get(Facility, current_user.facility_id) if current_user.facility_id else None
     return CurrentUserRead.model_validate(current_user).model_copy(update={"facility_name": facility.name if facility else None})
 
@@ -80,6 +116,11 @@ async def change_password(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
+    """Change the caller's own password. Any role.
+
+    Requires the current password (400 if it's wrong). Tokens already issued stay valid until
+    they expire; there is no token revocation.
+    """
     if not verify_password(payload.current_password, current_user.password_hash):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="current password is incorrect")
     current_user.password_hash = hash_password(payload.new_password)

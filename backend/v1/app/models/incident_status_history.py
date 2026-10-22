@@ -1,3 +1,4 @@
+"""IncidentStatusHistory model: the audit trail of every status change on a ticket."""
 from datetime import datetime
 
 from app.models.base import Base
@@ -6,6 +7,12 @@ from sqlalchemy import DateTime, ForeignKey, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 class IncidentStatusHistory(Base):
+    """One row per status transition (table `incident_status_history`), append-only.
+
+    Written by the incidents router whenever status changes, plus a first row when the ticket is
+    created. Deleted along with its incident (ON DELETE CASCADE). Incident.status_history returns
+    rows ordered by changed_at.
+    """
     __tablename__ = "incident_status_history"
 
     id: Mapped[int] = mapped_column(primary_key=True)

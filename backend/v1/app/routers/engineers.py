@@ -1,3 +1,14 @@
+"""
+Engineer profiles: the roster used for assigning tickets and balancing workload.
+
+URL prefix: /engineers. A profile adds work details (display name, phone, specialty, availability,
+max_open_tickets capacity) to a user account with the Engineer role; at most one per user.
+
+Who may call it: Facility Admins and Engineers can read; only admins create/delete. Engineers may
+PATCH their own profile's phone and is_available, nothing else. Employees get 403 on every endpoint.
+Visibility: admins see every facility's engineers (optionally filtered by facility_id); engineers only
+see colleagues at their own facility. A profile's facility is its user's facility_id.
+"""
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,8 +24,10 @@ router = APIRouter(prefix="/engineers", tags=["engineers"])
 # engineers may keep their own contact info + availability up to date, everything else is admin only
 ENGINEER_SELF_FIELDS = {"phone", "is_available"}
 
-# ?sort= keys match the engineers grid's column fields
+# ?sort= keys match the engineers grid's column fields. user/facility columns are correlated subqueries
+# so sorting by them doesn't need a join on the main query
 def _user_column(column):
+    """Scalar subquery reading `column` from the profile's user row, usable in ORDER BY."""
     return select(column).where(User.id == EngineerProfile.user_id).correlate(EngineerProfile).scalar_subquery()
 
 ENGINEER_SORTS = {
@@ -42,6 +55,13 @@ async def list_engineers(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.FACILITY_ADMIN, UserRole.ENGINEER)),
 ) -> list[EngineerProfile]:
+    """List engineer profiles. Facility Admin or Engineer.
+
+    Engineers only get colleagues at their own facility; their facility_id filter is ignored, so it
+    can't widen what they see. Admins see all facilities, or the ones passed in facility_id.
+    Other filters: is_available, specialty, q (name or phone). Paged with limit/offset, total in the
+    X-Total-Count header; default order is by display name. 400 for an unknown ?sort= column.
+    """
     query = select(EngineerProfile)
     # engineers only see colleagues at their own facility
     facility_ids = visible_facility_ids(current_user, facility_id)
@@ -63,6 +83,11 @@ async def get_engineer(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.FACILITY_ADMIN, UserRole.ENGINEER)),
 ) -> EngineerProfile:
+    """Get one engineer profile. Facility Admin or Engineer.
+
+    404 if it doesn't exist or, for engineers, if it belongs to another facility (404 rather than
+    403 so other campuses' profile ids aren't revealed).
+    """
     profile = await get_or_404(db, EngineerProfile, profile_id)
     facility_ids = visible_facility_ids(current_user)
     if facility_ids is not None and profile.facility_id not in facility_ids:
@@ -75,6 +100,12 @@ async def create_engineer(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
 ) -> EngineerProfile:
+    """Create a profile for an Engineer user. Facility Admin only.
+
+    - 400: the user's role isn't Engineer
+    - 404: the user doesn't exist
+    - 409: the user already has a profile
+    """
     user = await get_or_404(db, User, payload.user_id)
     if user.role != UserRole.ENGINEER:
         raise HTTPException(
@@ -98,6 +129,12 @@ async def update_engineer(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.FACILITY_ADMIN, UserRole.ENGINEER)),
 ) -> EngineerProfile:
+    """Edit a profile (PATCH: only the fields sent are changed). Facility Admin or Engineer.
+
+    Admins may change any field. Engineers may only update their own profile, and only phone and
+    is_available (403 for someone else's profile or any other field).
+    404 if the profile doesn't exist.
+    """
     profile = await get_or_404(db, EngineerProfile, profile_id)
     if current_user.role == UserRole.ENGINEER:
         if profile.user_id != current_user.id:
@@ -115,6 +152,10 @@ async def delete_engineer(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
 ) -> None:
+    """Delete an engineer profile. Facility Admin only. 404 if it doesn't exist.
+
+    Only the profile goes; the user account and their ticket assignments are untouched.
+    """
     profile = await get_or_404(db, EngineerProfile, profile_id)
     await db.delete(profile)
     await db.commit()
