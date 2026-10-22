@@ -24,4 +24,4 @@ jobs:
         run: pip3 install bandit
 
       - name: Run Bandit
-        run: bandit -r ./backend
+        run: bandit -r ./backend -x ./backend/v1/tests  # tests use assert and throwaway passwords by design

@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.routers import analytics, auth, engineers, facilities, incidents, users
 from app.config import settings
+from app.crud import TOTAL_COUNT_HEADER
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -25,6 +26,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=[TOTAL_COUNT_HEADER],  # lets the frontend read list totals for paging (local dev is cross-origin)
 )
 
 app.include_router(auth.router)

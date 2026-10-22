@@ -155,8 +155,20 @@ class Dashboard(BaseModel):
     building_id: int | None
     sla_targets_hours: dict[IncidentPriority, float]
     current: CurrentSnapshot
-    attention: list[TicketSummary]  # flagged active tickets, most urgent first
+    attention_counts: "AttentionCounts"  # the list itself: GET /analytics/attention
     my_tickets: list[TicketSummary] | None  # Employee only: their active + resolved tickets
     period: PeriodStats
     communication: Communication
     workload: list[EngineerLoad] | None  # Admin + Engineer
+
+class AttentionCounts(BaseModel):
+    total: int  # flagged tickets
+    by_kind: dict[AttentionKind, int]
+
+# GET /analytics/attention: one page of flagged tickets, most urgent first
+class AttentionPage(BaseModel):
+    total: int  # tickets matching the kind filter (all flagged tickets without one)
+    counts: AttentionCounts
+    items: list[TicketSummary]
+
+Dashboard.model_rebuild()

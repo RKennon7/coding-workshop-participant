@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.crud import apply_updates, get_or_404
+from app.crud import apply_updates, get_or_404, paginate, sort_order
 from app.dependencies import get_db, require_admin
 from app.models import Facility, User, UserRole
 from app.schemas.user import UserCreate, UserRead, UserUpdate
@@ -33,18 +33,31 @@ async def _check_facility(db: AsyncSession, role: UserRole, facility_id: int | N
         return
     await get_or_404(db, Facility, facility_id)
 
+# ?sort= keys match the users grid's column fields
+USER_SORTS = {
+    "id": User.id,
+    "username": User.username,
+    "email": User.email,
+    "role": User.role,
+    "facility_id": select(Facility.name).where(Facility.id == User.facility_id).correlate(User).scalar_subquery(),
+    "is_active": User.is_active,
+    "is_registered": User.password_hash.is_not(None),
+}
+
 @router.get("", response_model=list[UserRead])
 async def list_users(
     role: UserRole | None = None,
     is_active: bool | None = None,
     facility_id: list[int] | None = Query(default=None),
     q: str | None = Query(default=None, description="search username or email"),
-    limit: int = Query(default=100, ge=1, le=500),
+    sort: str | None = Query(default=None, description="column to sort by, '-' prefix for descending"),
+    limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
+    response: Response = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
 ) -> list[User]:
-    query = select(User).order_by(User.id).limit(limit).offset(offset)
+    query = select(User)
     if role is not None:
         query = query.where(User.role == role)
     if is_active is not None:
@@ -53,6 +66,7 @@ async def list_users(
         query = query.where(User.facility_id.in_(facility_id))
     if q:
         query = query.where(or_(User.username.ilike(f"%{q}%"), User.email.ilike(f"%{q}%")))
+    query = await paginate(db, response, query, order_by=sort_order(sort, USER_SORTS, [User.id]), limit=limit, offset=offset)
     return list(await db.scalars(query))
 
 @router.get("/{user_id}", response_model=UserRead)

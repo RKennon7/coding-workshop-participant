@@ -1,12 +1,12 @@
 from datetime import datetime, timezone
 from enum import Enum
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import ColumnElement, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from app.crud import apply_updates, ensure_fields_allowed, get_or_404
+from app.crud import apply_updates, ensure_fields_allowed, get_or_404, paginate, sort_order
 from app.dependencies import get_current_user, get_db, require_admin
 from app.facility_scope import facility_of_building, incidents_in, visible_facility_ids
 from app.models import (
@@ -62,6 +62,24 @@ EDITABLE_FIELDS: dict[Actor, set[str]] = {
 
 # reporter/assignee/history authors are embedded in responses, so load them with the incident
 INCIDENT_LOAD = (joinedload(Incident.reporter), joinedload(Incident.assignee))
+
+# ?sort= keys match the incidents grid's column fields. people/buildings sort by name, enums by workflow/severity order
+def _name_of(column, foreign_key):
+    return select(column).where(column.table.c.id == foreign_key).correlate(Incident).scalar_subquery()
+
+INCIDENT_SORTS = {
+    "id": Incident.id,
+    "title": Incident.title,
+    "status": Incident.status,
+    "priority": Incident.priority,
+    "category": Incident.category,
+    "created_at": Incident.created_at,
+    "is_escalated": Incident.is_escalated,
+    "reporter_id": _name_of(User.username, Incident.reporter_id),
+    "assignee_id": _name_of(User.username, Incident.assignee_id),
+    "building_id": _name_of(Building.name, Incident.building_id),
+}
+NEWEST_FIRST = [Incident.created_at.desc(), Incident.id.desc()]
 
 
 def _bad_request(detail: str) -> HTTPException:
@@ -194,20 +212,15 @@ async def list_incidents(
     reporter_id: int | None = None,
     unassigned: bool | None = None,
     is_escalated: bool | None = None,
-    q: str | None = Query(default=None, description="search title and description"),
+    q: str | None = Query(default=None, description="search title and description (or #id)"),
+    sort: str | None = Query(default=None, description="column to sort by, '-' prefix for descending. default newest first"),
     limit: int = Query(default=200, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
+    response: Response = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[Incident]:
-    query = (
-        select(Incident)
-        .options(*INCIDENT_LOAD)
-        .where(_visible_to(current_user))
-        .order_by(Incident.created_at.desc(), Incident.id.desc())
-        .limit(limit)
-        .offset(offset)
-    )
+    query = select(Incident).where(_visible_to(current_user))
     # multi-value filters, e.g. ?status=Open&status=Blocked
     if status_filter:
         query = query.where(Incident.status.in_(status_filter))
@@ -230,8 +243,13 @@ async def list_incidents(
     if unassigned is not None:
         query = query.where(Incident.assignee_id.is_(None) if unassigned else Incident.assignee_id.is_not(None))
     if q:
-        query = query.where(or_(Incident.title.ilike(f"%{q}%"), Incident.description.ilike(f"%{q}%")))
-    return list(await db.scalars(query))
+        search = or_(Incident.title.ilike(f"%{q}%"), Incident.description.ilike(f"%{q}%"))
+        ticket_id = q.strip().removeprefix("#")
+        query = query.where(or_(search, Incident.id == int(ticket_id)) if ticket_id.isdigit() else search)
+
+    # total goes in the X-Total-Count header, the body is one page
+    query = await paginate(db, response, query, order_by=sort_order(sort, INCIDENT_SORTS, NEWEST_FIRST), limit=limit, offset=offset)
+    return list(await db.scalars(query.options(*INCIDENT_LOAD)))
 
 @router.get("/{incident_id}", response_model=IncidentRead)
 async def get_incident(
@@ -275,11 +293,14 @@ async def update_incident(
     # status goes through the workflow below, every other field is copied as-is
     apply_updates(incident, payload, exclude={"status"})
 
-    if changes & {"building_id", "floor_id", "seat_id"}:
-        await _validate_location(db, incident, current_user)
-    # re-checked when the incident moves building too, so it can't end up with an engineer from another campus
-    if incident.assignee_id is not None and (changes & {"assignee_id", "building_id"}):
-        await _validate_assignee(db, incident.assignee_id, incident.building_id)
+    # no_autoflush: the lookups below must not write the unchecked ids first, or a missing one
+    # fails as a foreign key violation (409) instead of the 404/400 these checks give
+    with db.no_autoflush:
+        if changes & {"building_id", "floor_id", "seat_id"}:
+            await _validate_location(db, incident, current_user)
+        # re-checked when the incident moves building too, so it can't end up with an engineer from another campus
+        if incident.assignee_id is not None and (changes & {"assignee_id", "building_id"}):
+            await _validate_assignee(db, incident.assignee_id, incident.building_id)
     if incident.assignee_id != old_assignee_id:
         incident.assigned_at = datetime.now(timezone.utc) if incident.assignee_id is not None else None
     if payload.status is not None:

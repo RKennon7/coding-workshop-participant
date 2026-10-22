@@ -20,7 +20,13 @@ import { getErrorMessage, useResource } from '../../hooks/useResource.js';
  *  - getDeleteDetails(row): optional async check before deleting -> {message, blocked}. blocked disables the
  *    delete button (e.g. a building that still has incidents), message replaces the default confirmation text
  *  - openRowId / initialCreate: open that row's form (or the create form) on mount, e.g. when the dashboard links here
+ * the grid is paged, sorted and searched on the server: only the visible page is loaded
  */}
+
+const DEFAULT_PAGE_SIZE = 25;
+
+// grid sort model -> ?sort=field / ?sort=-field
+const toSortParam = (sortModel) => (sortModel[0] ? `${sortModel[0].sort === 'desc' ? '-' : ''}${sortModel[0].field}` : undefined);
 function ResourceView({
     title,
     singular,
@@ -38,7 +44,23 @@ function ResourceView({
     initialCreate = false,
 }) {
     const {can, canAny} = usePermissions();
-    const {rows, loading, error, create, update, remove} = useResource(service, {params: listParams});
+    // paging/sorting/search. the page goes back to the first one whenever anything else about the list changes
+    const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+    const [sortModel, setSortModel] = useState([]);
+    const [search, setSearch] = useState('');
+    const listKey = JSON.stringify({listParams, pageSize, sortModel, search});
+    const [pageState, setPageState] = useState({listKey, page: 0});
+    const page = pageState.listKey === listKey ? pageState.page : 0;
+    const setPage = (next) => setPageState({listKey, page: next});
+
+    const params = {
+        ...listParams,
+        limit: pageSize,
+        offset: page * pageSize,
+        sort: toSortParam(sortModel),
+        q: search || undefined,
+    };
+    const {rows, total, loading, error, create, update, remove} = useResource(service, {params, paged: true});
 
     // form state: null = closed, otherwise {mode, row}
     const [form, setForm] = useState(() => (initialCreate ? {mode: 'create', row: {}} : null));
@@ -104,6 +126,10 @@ function ResourceView({
     };
 
     const handleDelete = async () => {
+        // deleting the only row on the last page: step back so the grid doesn't show an empty page
+        if (rows.length === 1 && page > 0) {
+            setPage(page - 1);
+        }
         await remove(deleting.id);
         setToast({message: `${singular} deleted`, severity: 'success'});
     };
@@ -125,6 +151,17 @@ function ResourceView({
                 onDelete={startDelete}
                 toolbar={filters}
                 initialState={gridInitialState}
+                server={{
+                    rowCount: total,
+                    paginationModel: {page, pageSize},
+                    onPaginationModelChange: (model) => {
+                        if (model.pageSize !== pageSize) setPageSize(model.pageSize);
+                        else setPage(model.page);
+                    },
+                    sortModel,
+                    onSortModelChange: setSortModel,
+                    onSearchChange: setSearch,
+                }}
             />
 
             {form && (

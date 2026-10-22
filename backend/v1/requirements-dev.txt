@@ -7,12 +7,14 @@ fastapi
 fastapi-cli
 fastapi-cloud-cli
 httptools
+httpx
 Jinja2
 mangum
 pip
 pydantic-extra-types
 pydantic-settings
 PyJWT
+pytest
 pytest-asyncio
 python-multipart
 PyYAML

@@ -24,7 +24,9 @@ from app.models import (
 )
 from app.schemas.analytics import (
     AttentionFlag,
+    AttentionCounts,
     AttentionKind,
+    AttentionPage,
     CountItem,
     Communication,
     CurrentSnapshot,
@@ -48,6 +50,7 @@ from app.schemas.common import UserSummary
 """
 One endpoint that answers the dashboard's questions in a single round trip:
     GET /analytics/dashboard?start=&end=&facility_id=&building_id=&tz=
+    GET /analytics/attention?kind=&facility_id=&building_id=&limit=&offset=   (the "Needs attention" list, paged)
 Everything is limited to the caller's scope: admins see every ticket (or the facilities they pick), engineers the tickets assigned
 to them, employees the tickets they reported. "current" is the live state and ignores the date range;
 "period" only counts tickets created/resolved inside it.
@@ -65,7 +68,6 @@ SILENT_AFTER_DAYS = 3        # active ticket with no update the reporter can see
 UNASSIGNED_AFTER_HOURS = 24  # Critical/High are flagged as soon as they're unassigned
 RECURRING_MIN = 2            # same category this many times at one location in the range = recurring
 HOTSPOT_LIMIT = 8
-ATTENTION_LIMIT = 25
 DAILY_TREND_MAX_DAYS = 62    # longer ranges are bucketed by week
 
 ACTIVE = (S.OPEN, S.IN_PROGRESS, S.BLOCKED)
@@ -450,6 +452,45 @@ async def _workload(db: AsyncSession, start, end, facility_ids: list[int] | None
     return sorted(rows, key=lambda r: (-r.load_pct, r.display_name))
 
 
+# which tickets a dashboard request covers: (scope, where clauses, admin's facility filter)
+def _scope_where(user: User, facility_id: list[int] | None, building_id: int | None) -> tuple[DashboardScope, list, list[int] | None]:
+    scope, scope_filter = _scope_for(user)
+    where = [scope_filter]
+    # admins may narrow to some facilities. engineers/employees are already limited to their own tickets,
+    # and their team workload to their own facility
+    facility_ids = visible_facility_ids(user, facility_id)
+    if scope == DashboardScope.ALL and facility_ids is not None:
+        where.append(incidents_in(facility_ids))
+    if building_id is not None:
+        where.append(Incident.building_id == building_id)
+    return scope, where, facility_ids
+
+# how many flagged tickets carry each flag (a ticket with several flags counts under each)
+def _attention_counts(tickets: list[TicketSummary]) -> AttentionCounts:
+    flagged = [t for t in tickets if t.flags]
+    by_kind = {kind: 0 for kind in AttentionKind}
+    for ticket in flagged:
+        for flag in ticket.flags:
+            by_kind[flag.kind] += 1
+    return AttentionCounts(total=len(flagged), by_kind=by_kind)
+
+@router.get("/attention", response_model=AttentionPage)
+async def get_attention(
+    kind: AttentionKind | None = Query(default=None, description="only tickets with this flag"),
+    facility_id: list[int] | None = Query(default=None, description="admins: limit to these facilities (default all)"),
+    building_id: int | None = None,
+    limit: int = Query(default=5, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AttentionPage:
+    """flagged tickets, most urgent first, one page at a time"""
+    scope, where, _ = _scope_where(current_user, facility_id, building_id)
+    tickets = await _live_tickets(db, where, scope, datetime.now(timezone.utc))
+    flagged = [t for t in tickets if t.flags and (kind is None or any(f.kind == kind for f in t.flags))]
+    flagged.sort(key=_attention_sort_key)
+    return AttentionPage(total=len(flagged), counts=_attention_counts(tickets), items=flagged[offset:offset + limit])
+
 @router.get("/dashboard", response_model=Dashboard)
 async def get_dashboard(
     start: datetime | None = Query(default=None, description="range start (inclusive). omit for all time"),
@@ -460,6 +501,7 @@ async def get_dashboard(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Dashboard:
+    """the attention list's counts are here; the list itself is paged by GET /analytics/attention"""
     try:
         ZoneInfo(tz)
     except (ZoneInfoNotFoundError, ValueError):
@@ -472,20 +514,10 @@ async def get_dashboard(
     # same-length window right before this one, to show whether things got better or worse
     previous_start = start - (end - start) if start is not None else None
 
-    scope, scope_filter = _scope_for(current_user)
-    where = [scope_filter]
-    # admins may narrow to some facilities. engineers/employees are already limited to their own tickets,
-    # and their team workload to their own facility
-    facility_ids = visible_facility_ids(current_user, facility_id)
-    if scope == DashboardScope.ALL and facility_ids is not None:
-        where.append(incidents_in(facility_ids))
-    if building_id is not None:
-        where.append(Incident.building_id == building_id)
-
+    scope, where, facility_ids = _scope_where(current_user, facility_id, building_id)
     tickets = await _live_tickets(db, where, scope, now)
     active = [t for t in tickets if t.status in ACTIVE]
     silent = sum(any(f.kind == AttentionKind.SILENT for f in t.flags) for t in active)
-    attention = sorted((t for t in tickets if t.flags), key=_attention_sort_key)[:ATTENTION_LIMIT]
 
     return Dashboard(
         scope=scope,
@@ -494,7 +526,7 @@ async def get_dashboard(
         building_id=building_id,
         sla_targets_hours=SLA_TARGET_HOURS,
         current=_snapshot(tickets),
-        attention=attention,
+        attention_counts=_attention_counts(tickets),
         my_tickets=(
             sorted(tickets, key=lambda t: (t.status != S.RESOLVED, -t.last_update_at.timestamp()))
             if scope == DashboardScope.REPORTED else None

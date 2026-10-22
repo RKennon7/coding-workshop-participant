@@ -25,4 +25,7 @@ export const incidentNotesService = (incidentId) => createResource(`/incidents/$
 export const fetchIncidentHistory = (incidentId) => apiClient.get(`/incidents/${incidentId}/history`).then((res) => res.data);
 
 // everything the dashboard shows, scoped to the logged in user. params: {start, end, building_id, tz}
+// one page of the "Needs attention" list. params: {kind, facility_id, building_id, limit, offset}
+export const fetchAttention = (params) => apiClient.get('/analytics/attention', {params}).then((res) => res.data);
+
 export const fetchDashboard = (params) => apiClient.get('/analytics/dashboard', {params}).then((res) => res.data);

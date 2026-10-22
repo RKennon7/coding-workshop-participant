@@ -12,6 +12,9 @@ import DeleteIcon from '@mui/icons-material/Delete';
  *  - onRowClick: clicking anywhere on a row except the action buttons (defaults to onEdit)
  *  - includes the grid toolbar with quick search + filters
  *  - toolbar: extra content between the title and the grid (e.g. server-side filters)
+ *  - server: {rowCount, paginationModel, onPaginationModelChange, sortModel, onSortModelChange, onSearchChange}
+ *    pages, sorts and searches on the server instead of in the browser. the column filter menu is turned off
+ *    in that mode, since it could only filter the rows of the current page
  */}
 function DataTable({
     title,
@@ -31,6 +34,7 @@ function DataTable({
     initialState,
     height = 560,
     toolbar,
+    server,
 }) {
     const gridColumns = useMemo(() => {
         if (!canEdit && !canDelete) {
@@ -85,6 +89,20 @@ function DataTable({
                     }}
                     pageSizeOptions={[10, 25, 50, 100]}
                     showToolbar
+                    {...(server && {
+                        paginationMode: 'server',
+                        sortingMode: 'server',
+                        filterMode: 'server',
+                        disableColumnFilter: true,
+                        rowCount: server.rowCount,
+                        paginationModel: server.paginationModel,
+                        onPaginationModelChange: server.onPaginationModelChange,
+                        sortModel: server.sortModel,
+                        onSortModelChange: server.onSortModelChange,
+                        // the toolbar's quick search becomes the API's ?q=
+                        onFilterModelChange: (model) => server.onSearchChange((model.quickFilterValues ?? []).join(' ').trim()),
+                        slotProps: {toolbar: {quickFilterProps: {debounceMs: 400}}},
+                    })}
                     disableRowSelectionOnClick
                     sx={{'& .MuiDataGrid-row': {cursor: onRowClick ? 'pointer' : 'default'}}}
                 />

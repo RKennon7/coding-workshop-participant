@@ -481,6 +481,38 @@ buildings, engineers, and a spread of incidents for the dashboards.
 In AWS, seeded accounts get a random password that is printed once. You can
 set your own with `SEED_PASSWORD=... ./bin/init-database.sh aws`.
 
+### Run the backend tests
+
+The test suite in [backend/v1/tests/](backend/v1/tests/) runs the API in-process
+against a real PostgreSQL database. A real database is needed because the
+analytics queries use Postgres-only SQL. It uses the connection settings in
+`backend/v1/.env` (or `POSTGRES_*` env vars), but always runs against a separate
+`incident_platform_test` database. That database is created on first run and
+wiped before every test. Your dev data is never touched.
+
+```sh
+cd backend/v1
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt pytest pytest-asyncio httpx
+.venv/bin/pytest
+```
+
+| File                        | Covers                                                                                    |
+| --------------------------- | ----------------------------------------------------------------------------------------- |
+| `test_security.py`          | bcrypt hashing, 72-byte limit, JWT expiry/signature/`alg:none`, email + password rules    |
+| `test_auth.py`              | Login, account enumeration, invite-based registration, password change, token validation |
+| `test_rbac.py`              | Admin-only endpoint matrix for every role, plus a login check on every data endpoint      |
+| `test_incidents.py`         | Row-level visibility, field-level permissions, status workflow, assignment, filters       |
+| `test_notes.py`             | Internal-note confidentiality, author-only edits, closed-ticket rules                     |
+| `test_users.py`             | User management, uniqueness, self-lockout guards                                         |
+| `test_facilities.py`        | Campus scoping, delete safety, setup wizard                                               |
+| `test_engineers.py`         | Engineer self-service limits and campus scoping                                           |
+| `test_analytics.py`         | Dashboard numbers limited to each caller's scope                                          |
+| `test_lambda_entrypoint.py` | HTTP requests can't trigger the `init_db` action                                          |
+
+Set `TEST_POSTGRES_NAME` to use a different test database. The name must end
+in `_test`.
+
 ### Clean up
 
 ```sh

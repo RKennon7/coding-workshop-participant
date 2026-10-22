@@ -132,7 +132,7 @@ function AdminDashboard({data, ctx, attentionRef}) {
 
             <Grid container spacing={2}>
                 <Grid size={{xs: 12, md: 7}} ref={attentionRef} sx={{scrollMarginTop: 16}}>
-                    <AttentionList tickets={data.attention} filter={attention.filter} onFilterChange={attention.setFilter} onOpen={openIncident} showFacility={showFacility} />
+                    <AttentionList {...attention} onOpen={openIncident} showFacility={showFacility} />
                 </Grid>
                 <Grid size={{xs: 12, md: 5}}>
                     <SlaCard sla={period.sla} current={current} rangeLabel={rangeLabel} compareTo={compareTo} onShowBreached={() => showAttention('sla_breached')} />
@@ -215,7 +215,7 @@ function EngineerDashboard({data, ctx, attentionRef, userId}) {
 
             <Grid container spacing={2}>
                 <Grid size={{xs: 12, md: 7}} ref={attentionRef} sx={{scrollMarginTop: 16}}>
-                    <AttentionList tickets={data.attention} filter={attention.filter} onFilterChange={attention.setFilter} onOpen={openIncident} showAssignee={false} />
+                    <AttentionList {...attention} onOpen={openIncident} showAssignee={false} />
                 </Grid>
                 <Grid size={{xs: 12, md: 5}}>
                     <SlaCard sla={period.sla} current={current} rangeLabel={rangeLabel} compareTo={compareTo} onShowBreached={() => showAttention('sla_breached')} />
@@ -306,7 +306,8 @@ function DashboardPage() {
     const [range, setRange] = useState(isEmployee ? {preset: 'all'} : DEFAULT_RANGE);
     // null until the admin picks: then they start on their home facility (if they have one), else all facilities
     const [pickedFacilityIds, setPickedFacilityIds] = useState(null);
-    const facilityIds = pickedFacilityIds ?? (profile?.facility_id ? [profile.facility_id] : []);
+    const homeFacilityId = profile?.facility_id;
+    const facilityIds = useMemo(() => pickedFacilityIds ?? (homeFacilityId ? [homeFacilityId] : []), [pickedFacilityIds, homeFacilityId]);
     const [buildingId, setBuildingId] = useState(null);
     const [attentionFilter, setAttentionFilter] = useState(null);
     const attentionRef = useRef(null);
@@ -347,7 +348,13 @@ function DashboardPage() {
             setAttentionFilter(kind);
             attentionRef.current?.scrollIntoView({behavior: 'smooth', block: 'start'});
         },
-        attention: {filter: attentionFilter, setFilter: setAttentionFilter},
+        // the attention list loads its own pages, with the same scope as the dashboard and reloading with it
+        attention: {
+            filter: attentionFilter,
+            onFilterChange: setAttentionFilter,
+            scope: {facility_id: isAdmin ? facilityIds : [], building_id: buildingId ?? undefined},
+            refreshKey: loadedAt?.getTime(),
+        },
     };
 
     const updated = loadedAt ? ` · updated ${loadedAt.toLocaleTimeString(undefined, {timeStyle: 'short'})}` : '';
