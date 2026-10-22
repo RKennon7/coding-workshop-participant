@@ -4,8 +4,8 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db
-from app.models import User
-from app.schemas.user import PasswordChange, RegisterRequest, Token, UserRead
+from app.models import Facility, User
+from app.schemas.user import CurrentUserRead, PasswordChange, RegisterRequest, Token
 from app.security import DUMMY_PASSWORD_HASH, create_access_token, hash_password, verify_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -66,9 +66,13 @@ async def register(
     await db.commit()
     return _token_for(user)
 
-@router.get("/me", response_model=UserRead)
-async def read_me(current_user: User = Depends(get_current_user)) -> User:
-    return current_user
+@router.get("/me", response_model=CurrentUserRead)
+async def read_me(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> CurrentUserRead:
+    facility = await db.get(Facility, current_user.facility_id) if current_user.facility_id else None
+    return CurrentUserRead.model_validate(current_user).model_copy(update={"facility_name": facility.name if facility else None})
 
 @router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
 async def change_password(

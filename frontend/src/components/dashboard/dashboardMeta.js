@@ -33,7 +33,7 @@ export function loadTone(pct) {
     return 'success';
 }
 
-// "North Tower · Floor 3 · NT-3-02"
-export function formatLocation({building, floor, seat}) {
-    return [building, floor, seat].filter(Boolean).join(' · ');
+// "North Tower · Floor 3 · NT-3-02", led by the facility when the view spans several campuses
+export function formatLocation({facility, building, floor, seat}, withFacility = false) {
+    return [withFacility && facility, building, floor, seat].filter(Boolean).join(' · ');
 }

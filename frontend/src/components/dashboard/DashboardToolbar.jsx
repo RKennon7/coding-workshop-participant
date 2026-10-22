@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Box, IconButton, MenuItem, Stack, TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import FacilityMultiSelect from '../common/FacilityMultiSelect.jsx';
 
 const PRESETS = [
     {value: '7d', label: '7d'},
@@ -19,9 +20,13 @@ const toDateInput = (date) => {
 {/**
  * page title + controls: time range (presets or custom dates), building filter (admins), refresh
  *  - range / onRangeChange: see hooks/useDashboard.js for the shape
+ *  - facilityOptions: [{value, label}], omit to hide the facility filter (admins only)
  *  - buildingOptions: [{value, label}], omit to hide the building filter
  */}
-function DashboardToolbar({title, subtitle, range, onRangeChange, buildingOptions, buildingId, onBuildingChange, onRefresh, loading, actions}) {
+function DashboardToolbar({
+    title, subtitle, range, onRangeChange, facilityOptions, facilityIds, onFacilityChange,
+    buildingOptions, buildingId, onBuildingChange, onRefresh, loading, actions,
+}) {
     // custom dates are edited here and only applied once both are valid
     const [draft, setDraft] = useState(() => (range?.preset === 'custom'
         ? {from: range.from, to: range.to}
@@ -50,6 +55,7 @@ function DashboardToolbar({title, subtitle, range, onRangeChange, buildingOption
             </Box>
             <Stack direction="row" useFlexGap sx={{flexWrap: 'wrap', gap: 1, alignItems: 'center'}}>
                 {actions}
+                {facilityOptions && <FacilityMultiSelect options={facilityOptions} value={facilityIds} onChange={onFacilityChange} />}
                 {buildingOptions && (
                     <TextField
                         select

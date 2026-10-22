@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.crud import apply_updates, get_or_404
 from app.dependencies import get_db, require_admin
-from app.models import User, UserRole
+from app.models import Facility, User, UserRole
 from app.schemas.user import UserCreate, UserRead, UserUpdate
 from app.security import hash_password
 
@@ -25,10 +25,19 @@ async def _ensure_unique(db: AsyncSession, username: str | None, email: str | No
                 detail=f"{column.key} '{value}' is already taken",
             )
 
+# engineers/employees only see their own facility, so they must have one. admins may (it's their default view)
+async def _check_facility(db: AsyncSession, role: UserRole, facility_id: int | None) -> None:
+    if facility_id is None:
+        if role != UserRole.FACILITY_ADMIN:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"A facility is required for the {role.value} role")
+        return
+    await get_or_404(db, Facility, facility_id)
+
 @router.get("", response_model=list[UserRead])
 async def list_users(
     role: UserRole | None = None,
     is_active: bool | None = None,
+    facility_id: list[int] | None = Query(default=None),
     q: str | None = Query(default=None, description="search username or email"),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
@@ -40,6 +49,8 @@ async def list_users(
         query = query.where(User.role == role)
     if is_active is not None:
         query = query.where(User.is_active == is_active)
+    if facility_id:
+        query = query.where(User.facility_id.in_(facility_id))
     if q:
         query = query.where(or_(User.username.ilike(f"%{q}%"), User.email.ilike(f"%{q}%")))
     return list(await db.scalars(query))
@@ -61,11 +72,13 @@ async def create_user(
     _: User = Depends(require_admin),
 ) -> User:
     await _ensure_unique(db, payload.username, payload.email)
+    await _check_facility(db, payload.role, payload.facility_id)
     user = User(
         username=payload.username,
         email=payload.email,
         password_hash=hash_password(payload.password) if payload.password else None,
         role=payload.role,
+        facility_id=payload.facility_id,
     )
     db.add(user)
     await db.commit()
@@ -87,6 +100,9 @@ async def update_user(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You can't deactivate or demote yourself")
 
     await _ensure_unique(db, payload.username, payload.email, exclude_id=user.id)
+    changes = payload.model_dump(exclude_unset=True)
+    if changes.keys() & {"role", "facility_id"}:
+        await _check_facility(db, changes.get("role") or user.role, changes.get("facility_id", user.facility_id))
     apply_updates(user, payload)
     await db.commit()
     await db.refresh(user)

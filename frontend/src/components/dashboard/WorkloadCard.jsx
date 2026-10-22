@@ -5,7 +5,7 @@ import { loadTone } from './dashboardMeta.js';
 
 const initials = (name) => name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase();
 
-function EngineerRow({engineer, rangeLabel}) {
+function EngineerRow({engineer, rangeLabel, facilityName}) {
     const tone = loadTone(engineer.load_pct);
     const extras = [
         engineer.blocked && `${engineer.blocked} blocked`,
@@ -27,7 +27,7 @@ function EngineerRow({engineer, rangeLabel}) {
                     </Stack>
                 </Stack>
                 <Typography variant="caption" color="text.secondary" component="p" noWrap>
-                    {engineer.specialty ?? 'Generalist'} · {extras.join(' · ')}
+                    {facilityName && `${facilityName} · `}{engineer.specialty ?? 'Generalist'} · {extras.join(' · ')}
                 </Typography>
             </Box>
             {/* capacity: open tickets against the engineer's max, labelled so it doesn't rely on color */}
@@ -53,8 +53,9 @@ function EngineerRow({engineer, rangeLabel}) {
 {/**
  * engineer availability + how open work is spread across the team, busiest first.
  * onSelect(engineer) makes a row clickable (admins drill into that engineer's tickets)
+ * facilityNames: {id: name}, pass it when the list spans several facilities to label each engineer
  */}
-function WorkloadCard({engineers, rangeLabel, onSelect, highlightUserId}) {
+function WorkloadCard({engineers, rangeLabel, onSelect, highlightUserId, facilityNames}) {
     const available = engineers.filter((e) => e.is_available);
     const totalActive = engineers.reduce((sum, e) => sum + e.active, 0);
     // tickets sitting with someone who can't work on them right now
@@ -85,11 +86,11 @@ function WorkloadCard({engineers, rangeLabel, onSelect, highlightUserId}) {
                         const sx = {px: 1, py: 1, borderRadius: 2, ...(highlighted && {bgcolor: 'action.selected'})};
                         return onSelect ? (
                             <ListItemButton key={engineer.user_id} onClick={() => onSelect(engineer)} sx={sx}>
-                                <EngineerRow engineer={engineer} rangeLabel={rangeLabel} />
+                                <EngineerRow engineer={engineer} rangeLabel={rangeLabel} facilityName={facilityNames?.[engineer.facility_id]} />
                             </ListItemButton>
                         ) : (
                             <ListItem key={engineer.user_id} sx={sx}>
-                                <EngineerRow engineer={engineer} rangeLabel={rangeLabel} />
+                                <EngineerRow engineer={engineer} rangeLabel={rangeLabel} facilityName={facilityNames?.[engineer.facility_id]} />
                             </ListItem>
                         );
                     })}

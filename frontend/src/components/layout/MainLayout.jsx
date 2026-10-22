@@ -1,13 +1,18 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Box, Container, Tab, Tabs } from '@mui/material';
+import { Alert, Box, Container, Tab, Tabs } from '@mui/material';
 import AppHeader from './AppHeader.jsx';
 import { NAV_SECTIONS } from './navigation.js';
 import { NavigationContext } from '../../context/NavigationContext.jsx';
 import { usePermissions } from '../../hooks/usePermissions.js';
+import { useAuth } from '../../context/AuthContext.jsx';
+import { ROLES } from '../../auth/permissions.js';
 
 {/** header + tab menu + the active section's page, limited to sections the user can see */}
 function MainLayout() {
-    const {can} = usePermissions();
+    const {can, role} = usePermissions();
+    const {profile} = useAuth();
+    // e.g. their facility was deleted: they see no locations until an admin reassigns them
+    const needsFacility = role !== ROLES.FACILITY_ADMIN && profile && profile.facility_id == null;
     const sections = NAV_SECTIONS.filter((section) => can(section.permission));
 
     // params are handed to the page (e.g. filters from a dashboard click). visit counts every navigation,
@@ -44,6 +49,12 @@ function MainLayout() {
                     </Container>
                 </Box>
                 <Container maxWidth="xl" component="main" sx={{py: 3}}>
+                    {needsFacility && (
+                        <Alert severity="warning" sx={{mb: 2}}>
+                            Your account isn't assigned to a facility yet, so there are no locations to report issues at.
+                            Please contact a Facility Admin to be assigned to one.
+                        </Alert>
+                    )}
                     {ActivePage && <ActivePage key={nav.visit} params={active.id === nav.id ? nav.params : null} />}
                 </Container>
             </Box>

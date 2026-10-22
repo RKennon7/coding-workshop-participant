@@ -4,7 +4,7 @@ import { PERMISSIONS, ROLES } from '../auth/permissions.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { usePermissions } from '../hooks/usePermissions.js';
 import { toLabelMap, useOptions } from '../hooks/useResource.js';
-import { engineersService, usersService } from '../services/index.js';
+import { engineersService, facilitiesService, usersService } from '../services/index.js';
 import { INCIDENT_CATEGORIES, toOptions } from '../constants/enums.js';
 
 function EngineersPage() {
@@ -15,19 +15,23 @@ function EngineersPage() {
     // a profile links to a user account with the Engineer role (the users list is admin only)
     const allUsers = useOptions(usersService, (u) => `${u.username} (${u.email})`, {enabled: can(PERMISSIONS.USERS_VIEW)});
     const engineerUsers = useMemo(() => allUsers.filter((o) => o.row.role === ROLES.ENGINEER), [allUsers]);
+    const facilityOptions = useOptions(facilitiesService, (f) => f.name);
 
     const columns = useMemo(() => {
         const users = toLabelMap(allUsers);
+        const facilities = toLabelMap(facilityOptions);
         return [
             {field: 'id', headerName: 'ID', width: 70},
             {field: 'display_name', headerName: 'Name', flex: 1, minWidth: 160},
             {field: 'user_id', headerName: 'User', flex: 1, minWidth: 200, valueGetter: (value) => users[value] ?? value},
+            // from the linked user account: change it on the Users page
+            {field: 'facility_id', headerName: 'Facility', flex: 1, minWidth: 150, valueGetter: (value) => facilities[value] ?? value},
             {field: 'specialty', headerName: 'Specialty', width: 160, type: 'singleSelect', valueOptions: INCIDENT_CATEGORIES},
             {field: 'phone', headerName: 'Phone', width: 140},
             {field: 'is_available', headerName: 'Available', width: 100, type: 'boolean'},
             {field: 'max_open_tickets', headerName: 'Max Open Tickets', width: 150, type: 'number'},
         ];
-    }, [allUsers]);
+    }, [allUsers, facilityOptions]);
 
     // admins edit everything; engineers can only keep their own phone + availability current
     const fields = useMemo(() => {

@@ -17,4 +17,9 @@ class EngineerProfile(Base):
     max_open_tickets: Mapped[int] = mapped_column(default=10)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    user: Mapped["User"] = relationship(back_populates="engineer_profile")
+    # joined so facility_id below is always available (profiles are listed with their facility)
+    user: Mapped["User"] = relationship(back_populates="engineer_profile", lazy="joined")
+
+    @property
+    def facility_id(self) -> int | None:
+        return self.user.facility_id

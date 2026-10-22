@@ -7,9 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from app.dependencies import get_current_user, get_db
+from app.facility_scope import incidents_in, users_in, visible_facility_ids
 from app.models import (
     Building,
     EngineerProfile,
+    Facility,
     Floor,
     Incident,
     IncidentNote,
@@ -45,8 +47,8 @@ from app.schemas.common import UserSummary
 
 """
 One endpoint that answers the dashboard's questions in a single round trip:
-    GET /analytics/dashboard?start=&end=&building_id=&tz=
-Everything is limited to the caller's scope: admins see every ticket, engineers the tickets assigned
+    GET /analytics/dashboard?start=&end=&facility_id=&building_id=&tz=
+Everything is limited to the caller's scope: admins see every ticket (or the facilities they pick), engineers the tickets assigned
 to them, employees the tickets they reported. "current" is the live state and ignores the date range;
 "period" only counts tickets created/resolved inside it.
 """
@@ -184,7 +186,7 @@ async def _live_tickets(db: AsyncSession, where: list, scope: DashboardScope, no
         .options(
             joinedload(Incident.reporter),
             joinedload(Incident.assignee),
-            joinedload(Incident.building),
+            joinedload(Incident.building).joinedload(Building.facility),
             joinedload(Incident.floor),
             joinedload(Incident.seat),
         )
@@ -205,6 +207,7 @@ async def _live_tickets(db: AsyncSession, where: list, scope: DashboardScope, no
             assignee=UserSummary.model_validate(incident.assignee) if incident.assignee else None,
             reporter=UserSummary.model_validate(incident.reporter),
             location=LocationRef(
+                facility=incident.building.facility.name,
                 building=incident.building.name,
                 floor=incident.floor.name if incident.floor else None,
                 seat=incident.seat.code if incident.seat else None,
@@ -335,16 +338,17 @@ async def _trend(db: AsyncSession, where: list, start, end, tz: str) -> tuple[st
 async def _hotspots(db: AsyncSession, where: list) -> Hotspots:
     active = func.count().filter(Incident.status.in_(ACTIVE))
 
-    async def ranked(id_column, label, building_column, *joins) -> list[HotspotItem]:
+    # every level is joined through its building + facility, so rows can say which campus they're on
+    async def ranked(id_column, label, *joins) -> list[HotspotItem]:
         def joined(query):
-            for target, on in joins:
+            for target, on in (building_join, facility_join, *joins):
                 query = query.join(target, on)
             return query
 
         query = (
-            joined(select(id_column, label, building_column, func.count(), active).select_from(Incident))
+            joined(select(id_column, label, Building.id, Facility.name, func.count(), active).select_from(Incident))
             .where(*where, id_column.is_not(None))
-            .group_by(id_column, label, building_column)
+            .group_by(id_column, label, Building.id, Facility.name)
             .order_by(func.count().desc(), label)
             .limit(HOTSPOT_LIMIT)
         )
@@ -363,22 +367,20 @@ async def _hotspots(db: AsyncSession, where: list) -> Hotspots:
                 top.setdefault(location_id, (category, n))  # first row per location is its biggest
         return [
             HotspotItem(
-                id=i, label=text, building_id=b, count=n, active=a,
+                id=i, label=text, building_id=b, facility=f, count=n, active=a,
                 top_category=top[i][0], top_category_count=top[i][1], recurring=top[i][1] >= RECURRING_MIN,
             )
-            for i, text, b, n, a in rows
+            for i, text, b, f, n, a in rows
         ]
 
     building_join = (Building, Building.id == Incident.building_id)
+    facility_join = (Facility, Facility.id == Building.facility_id)
     floor_join = (Floor, Floor.id == Incident.floor_id)
     floor_label = Building.name + literal(" · ") + Floor.name
     return Hotspots(
-        buildings=await ranked(Building.id, Building.name, Building.id, building_join),
-        floors=await ranked(Floor.id, floor_label, Building.id, building_join, floor_join),
-        seats=await ranked(
-            Seat.id, floor_label + literal(" · ") + Seat.code, Building.id,
-            building_join, floor_join, (Seat, Seat.id == Incident.seat_id),
-        ),
+        buildings=await ranked(Building.id, Building.name),
+        floors=await ranked(Floor.id, floor_label, floor_join),
+        seats=await ranked(Seat.id, floor_label + literal(" · ") + Seat.code, floor_join, (Seat, Seat.id == Incident.seat_id)),
     )
 
 async def _period(db: AsyncSession, where: list, start, end, previous_start, tz: str) -> PeriodStats:
@@ -408,7 +410,7 @@ async def _period(db: AsyncSession, where: list, start, end, previous_start, tz:
 
 # ---------- engineer workload (not limited to the caller's tickets) ----------
 
-async def _workload(db: AsyncSession, start, end) -> list[EngineerLoad]:
+async def _workload(db: AsyncSession, start, end, facility_ids: list[int] | None) -> list[EngineerLoad]:
     load = (
         select(
             Incident.assignee_id.label("user_id"),
@@ -427,10 +429,13 @@ async def _workload(db: AsyncSession, start, end) -> list[EngineerLoad]:
         .outerjoin(load, load.c.user_id == EngineerProfile.user_id)
         .where(User.is_active.is_(True))
     )
+    if facility_ids is not None:
+        query = query.where(users_in(facility_ids))
     rows = [
         EngineerLoad(
             user_id=profile.user_id,
             display_name=profile.display_name,
+            facility_id=profile.facility_id,
             specialty=profile.specialty,
             is_available=profile.is_available,
             max_open_tickets=profile.max_open_tickets,
@@ -449,6 +454,7 @@ async def _workload(db: AsyncSession, start, end) -> list[EngineerLoad]:
 async def get_dashboard(
     start: datetime | None = Query(default=None, description="range start (inclusive). omit for all time"),
     end: datetime | None = Query(default=None, description="range end (exclusive). defaults to now"),
+    facility_id: list[int] | None = Query(default=None, description="admins: limit to these facilities (default all)"),
     building_id: int | None = None,
     tz: str = Query(default="UTC", description="IANA time zone used to group the trend by day/week"),
     db: AsyncSession = Depends(get_db),
@@ -468,6 +474,11 @@ async def get_dashboard(
 
     scope, scope_filter = _scope_for(current_user)
     where = [scope_filter]
+    # admins may narrow to some facilities. engineers/employees are already limited to their own tickets,
+    # and their team workload to their own facility
+    facility_ids = visible_facility_ids(current_user, facility_id)
+    if scope == DashboardScope.ALL and facility_ids is not None:
+        where.append(incidents_in(facility_ids))
     if building_id is not None:
         where.append(Incident.building_id == building_id)
 
@@ -479,6 +490,7 @@ async def get_dashboard(
     return Dashboard(
         scope=scope,
         range=DashboardRange(start=start, end=end, previous_start=previous_start),
+        facility_ids=facility_ids if scope == DashboardScope.ALL else None,
         building_id=building_id,
         sla_targets_hours=SLA_TARGET_HOURS,
         current=_snapshot(tickets),
@@ -494,5 +506,5 @@ async def get_dashboard(
             updated_recently=len(active) - silent,
             updated_recently_pct=_pct(len(active) - silent, len(active)),
         ),
-        workload=await _workload(db, start, end) if scope != DashboardScope.REPORTED else None,
+        workload=await _workload(db, start, end, facility_ids) if scope != DashboardScope.REPORTED else None,
     )

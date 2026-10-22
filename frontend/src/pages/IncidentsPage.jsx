@@ -5,12 +5,12 @@ import EnumChip from '../components/common/EnumChip.jsx';
 import IncidentNotes from '../components/incidents/IncidentNotes.jsx';
 import IncidentHistory from '../components/incidents/IncidentHistory.jsx';
 import IncidentFilters from '../components/incidents/IncidentFilters.jsx';
-import { PERMISSIONS } from '../auth/permissions.js';
+import { PERMISSIONS, ROLES } from '../auth/permissions.js';
 import { canEditIncidentField, statusChoices } from '../auth/incidentRules.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { usePermissions } from '../hooks/usePermissions.js';
 import { toLabelMap, useOptions } from '../hooks/useResource.js';
-import { buildingsService, engineersService, floorsService, incidentsService, seatsService } from '../services/index.js';
+import { buildingsService, engineersService, facilitiesService, floorsService, incidentsService, seatsService } from '../services/index.js';
 import {
     INCIDENT_CATEGORIES, INCIDENT_PRIORITIES, INCIDENT_STATUSES, PRIORITY_COLORS, STATUS_COLORS, toOptions,
 } from '../constants/enums.js';
@@ -39,12 +39,20 @@ function withCurrentAssignee(options, incident) {
  */}
 function IncidentsPage({params}) {
     const {can} = usePermissions();
-    const {user} = useAuth();
-    const [filters, setFilters] = useState(() => params?.filters ?? {});
+    const {user, profile} = useAuth();
+    const isAdmin = user?.role === ROLES.FACILITY_ADMIN;
+    // admins with a home facility start filtered to it (they can clear it to see every facility)
+    const [filters, setFilters] = useState(() => params?.filters
+        ?? (isAdmin && profile?.facility_id ? {facility_id: [profile.facility_id]} : {}));
     const compact = useMediaQuery((theme) => theme.breakpoints.down('md'), {noSsr: true});
     const listParams = useMemo(() => toListParams(filters), [filters]);
 
+    const facilityOptions = useOptions(facilitiesService, (f) => f.name, {enabled: isAdmin});
     const buildingOptions = useOptions(buildingsService, (b) => b.name);
+    // the filter bar only offers buildings in the picked facilities
+    const filterBuildingOptions = useMemo(() => (filters.facility_id?.length
+        ? buildingOptions.filter((o) => filters.facility_id.includes(o.row.facility_id))
+        : buildingOptions), [buildingOptions, filters.facility_id]);
     const floorOptions = useOptions(floorsService, (f) => f.name);
     const seatOptions = useOptions(seatsService, (s) => s.code);
     // assignee_id is a user id, so engineer options use the profile's user_id
@@ -127,8 +135,12 @@ function IncidentsPage({params}) {
                 options: (values) => seatOptions.filter((o) => o.row.floor_id === values.floor_id),
             },
             {
+                // only engineers who work at the incident's facility (the backend rejects anyone else)
                 name: 'assignee_id', label: 'Assignee', type: 'select', hideOnCreate: true, editableBy: rule('assignee_id'),
-                options: (values, incident) => withCurrentAssignee(engineerOptions, incident),
+                options: (values, incident) => {
+                    const facilityId = buildingOptions.find((o) => o.value === values.building_id)?.row.facility_id;
+                    return withCurrentAssignee(engineerOptions.filter((o) => o.row.facility_id === facilityId), incident);
+                },
             },
             {
                 name: 'is_escalated', label: 'Escalate this incident', type: 'checkbox', hideOnCreate: true,
@@ -159,7 +171,8 @@ function IncidentsPage({params}) {
                 <IncidentFilters
                     filters={filters}
                     onChange={setFilters}
-                    buildingOptions={buildingOptions}
+                    buildingOptions={filterBuildingOptions}
+                    facilityOptions={isAdmin ? facilityOptions : null}
                     floorOptions={floorOptions}
                     seatOptions={seatOptions}
                     engineerOptions={engineerOptions}

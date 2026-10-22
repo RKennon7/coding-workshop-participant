@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.crud import apply_updates, ensure_fields_allowed, get_or_404
 from app.dependencies import get_db, require_admin, require_role
+from app.facility_scope import visible_facility_ids
 from app.models import EngineerProfile, IncidentCategory, User, UserRole
 from app.schemas.engineer import EngineerCreate, EngineerRead, EngineerUpdate
 
@@ -16,10 +17,15 @@ ENGINEER_SELF_FIELDS = {"phone", "is_available"}
 async def list_engineers(
     is_available: bool | None = None,
     specialty: IncidentCategory | None = None,
+    facility_id: list[int] | None = Query(default=None, description="admins: limit to these facilities"),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_role(UserRole.FACILITY_ADMIN, UserRole.ENGINEER)),
+    current_user: User = Depends(require_role(UserRole.FACILITY_ADMIN, UserRole.ENGINEER)),
 ) -> list[EngineerProfile]:
     query = select(EngineerProfile).order_by(EngineerProfile.display_name)
+    # engineers only see colleagues at their own facility
+    facility_ids = visible_facility_ids(current_user, facility_id)
+    if facility_ids is not None:
+        query = query.join(User, User.id == EngineerProfile.user_id).where(User.facility_id.in_(facility_ids))
     if is_available is not None:
         query = query.where(EngineerProfile.is_available == is_available)
     if specialty is not None:
@@ -30,9 +36,13 @@ async def list_engineers(
 async def get_engineer(
     profile_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_role(UserRole.FACILITY_ADMIN, UserRole.ENGINEER)),
+    current_user: User = Depends(require_role(UserRole.FACILITY_ADMIN, UserRole.ENGINEER)),
 ) -> EngineerProfile:
-    return await get_or_404(db, EngineerProfile, profile_id)
+    profile = await get_or_404(db, EngineerProfile, profile_id)
+    facility_ids = visible_facility_ids(current_user)
+    if facility_ids is not None and profile.facility_id not in facility_ids:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"EngineerProfile {profile_id} not found")
+    return profile
 
 @router.post("", response_model=EngineerRead, status_code=status.HTTP_201_CREATED)
 async def create_engineer(

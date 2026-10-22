@@ -11,7 +11,7 @@ function FlagChip({kind}) {
     return <Chip size="small" variant="outlined" color={color} icon={<Icon />} label={label} />;
 }
 
-function AttentionItem({ticket, onOpen, showAssignee}) {
+function AttentionItem({ticket, onOpen, showAssignee, showFacility}) {
     // flags arrive most urgent first: the first one picks the icon and gives the headline reason
     const [primary, ...others] = ticket.flags;
     const meta = FLAG_META[primary.kind];
@@ -48,7 +48,7 @@ function AttentionItem({ticket, onOpen, showAssignee}) {
                 <Stack direction="row" useFlexGap sx={{flexWrap: 'wrap', gap: 0.75, alignItems: 'center', mt: 0.75}}>
                     {others.map((flag) => <FlagChip key={flag.kind} kind={flag.kind} />)}
                     <Typography variant="caption" color="text.secondary">
-                        {formatLocation(ticket.location)} · {people} · {formatDuration(ticket.age_hours)} old
+                        {formatLocation(ticket.location, showFacility)} · {people} · {formatDuration(ticket.age_hours)} old
                     </Typography>
                 </Stack>
             </Box>
@@ -60,7 +60,7 @@ function AttentionItem({ticket, onOpen, showAssignee}) {
  * flagged tickets with the reason they need someone, most urgent first.
  * chips on top narrow the list to one kind of problem; clicking a ticket opens it
  */}
-function AttentionList({tickets, filter, onFilterChange, onOpen, showAssignee = true, maxHeight = 460}) {
+function AttentionList({tickets, filter, onFilterChange, onOpen, showAssignee = true, showFacility = false, maxHeight = 460}) {
     const counts = {};
     for (const ticket of tickets) {
         for (const flag of ticket.flags) {
@@ -101,7 +101,7 @@ function AttentionList({tickets, filter, onFilterChange, onOpen, showAssignee = 
             ) : (
                 <List dense disablePadding sx={{maxHeight, overflowY: 'auto', mx: -1}}>
                     {visible.map((ticket) => (
-                        <AttentionItem key={ticket.id} ticket={ticket} onOpen={onOpen} showAssignee={showAssignee} />
+                        <AttentionItem key={ticket.id} ticket={ticket} onOpen={onOpen} showAssignee={showAssignee} showFacility={showFacility} />
                     ))}
                 </List>
             )}

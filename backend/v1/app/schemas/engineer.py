@@ -28,4 +28,5 @@ class EngineerRead(ORMModel):
     specialty: IncidentCategory | None
     is_available: bool
     max_open_tickets: int
+    facility_id: int | None  # from the linked user account
     created_at: datetime

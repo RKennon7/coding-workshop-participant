@@ -13,7 +13,7 @@ const LEVELS = [
  * locations with the most incidents in the range, by building / floor / seat.
  * "Recurring" = the same kind of issue keeps coming back to that spot
  */}
-function HotspotsCard({hotspots, rangeLabel, onSelect}) {
+function HotspotsCard({hotspots, rangeLabel, onSelect, showFacility = false}) {
     const [level, setLevel] = useState('floors');
     const {filter} = LEVELS.find((l) => l.key === level);
     const items = hotspots[level];
@@ -40,7 +40,7 @@ function HotspotsCard({hotspots, rangeLabel, onSelect}) {
                             sx={{px: 1, py: 0.75, borderRadius: 2, display: 'block'}}
                         >
                             <Stack direction="row" spacing={1} sx={{alignItems: 'baseline'}}>
-                                <Typography variant="body2" noWrap sx={{flex: 1, minWidth: 0, fontWeight: 500}}>{item.label}</Typography>
+                                <Typography variant="body2" noWrap sx={{flex: 1, minWidth: 0, fontWeight: 500}}>{showFacility ? `${item.facility} · ${item.label}` : item.label}</Typography>
                                 <Typography variant="body2" sx={{fontWeight: 700}}>{item.count}</Typography>
                             </Stack>
                             <Box sx={{height: 6, borderRadius: 3, bgcolor: 'action.hover', my: 0.5}}>

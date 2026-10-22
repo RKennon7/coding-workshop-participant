@@ -3,6 +3,7 @@ import FlagIcon from '@mui/icons-material/Flag';
 import FilterAltOffIcon from '@mui/icons-material/FilterAltOff';
 import { INCIDENT_CATEGORIES, INCIDENT_PRIORITIES, INCIDENT_STATUSES } from '../../constants/enums.js';
 import { toListParams } from '../../utils/filters.js';
+import FacilityMultiSelect from '../common/FacilityMultiSelect.jsx';
 
 const UNASSIGNED = 'unassigned';
 
@@ -43,16 +44,26 @@ function SingleSelect({label, value, options, onChange}) {
 
 {/**
  * server-side filters for the incidents grid (the grid's own quick search still works on top)
- *  - filters: {status: [], priority: [], category: [], building_id, floor_id, seat_id, assignee_id, unassigned, is_escalated}
+ *  - filters: {status: [], priority: [], category: [], facility_id: [], building_id, floor_id, seat_id, assignee_id, unassigned, is_escalated}
+ *  - facilityOptions: admins only, omit to hide the facility picker. buildingOptions should already be narrowed to it
  *  - floor/seat have no dropdown, they come from dashboard links and show as removable chips
  */}
-function IncidentFilters({filters, onChange, buildingOptions, floorOptions, seatOptions, engineerOptions, showAssignee}) {
+function IncidentFilters({filters, onChange, facilityOptions, buildingOptions, floorOptions, seatOptions, engineerOptions, showAssignee}) {
     const set = (changes) => onChange({...filters, ...changes});
     const label = (options, id) => options.find((option) => option.value === id)?.label ?? `#${id}`;
     const hasFilters = Object.keys(toListParams(filters)).length > 0;
 
     return (
         <Stack direction="row" useFlexGap sx={{flexWrap: 'wrap', gap: 1.5, alignItems: 'center'}}>
+            {facilityOptions && (
+                <FacilityMultiSelect
+                    options={facilityOptions}
+                    value={filters.facility_id}
+                    // a building outside the new facilities would leave the list empty
+                    onChange={(facility_id) => set({facility_id, building_id: null, floor_id: null, seat_id: null})}
+                    sx={{flex: {xs: '1 1 140px', md: '0 0 auto'}}}
+                />
+            )}
             <MultiSelect label="Status" value={filters.status} options={INCIDENT_STATUSES} onChange={(status) => set({status})} />
             <MultiSelect label="Priority" value={filters.priority} options={INCIDENT_PRIORITIES} onChange={(priority) => set({priority})} />
             <MultiSelect label="Category" value={filters.category} options={INCIDENT_CATEGORIES} onChange={(category) => set({category})} />

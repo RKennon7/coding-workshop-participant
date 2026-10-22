@@ -17,6 +17,8 @@ import { getErrorMessage, useResource } from '../../hooks/useResource.js';
  *  - listParams: query params for the list call (e.g. filters), the grid reloads when they change
  *  - filters: content shown between the title and the grid (e.g. a filter bar)
  *  - gridInitialState: passed to the DataGrid's initialState (e.g. hidden columns)
+ *  - getDeleteDetails(row): optional async check before deleting -> {message, blocked}. blocked disables the
+ *    delete button (e.g. a building that still has incidents), message replaces the default confirmation text
  *  - openRowId / initialCreate: open that row's form (or the create form) on mount, e.g. when the dashboard links here
  */}
 function ResourceView({
@@ -31,6 +33,7 @@ function ResourceView({
     listParams,
     filters,
     gridInitialState,
+    getDeleteDetails,
     openRowId = null,
     initialCreate = false,
 }) {
@@ -40,6 +43,22 @@ function ResourceView({
     // form state: null = closed, otherwise {mode, row}
     const [form, setForm] = useState(() => (initialCreate ? {mode: 'create', row: {}} : null));
     const [deleting, setDeleting] = useState(null);
+    // {loading} while getDeleteDetails runs, then {message, blocked}
+    const [deleteInfo, setDeleteInfo] = useState(null);
+
+    const startDelete = async (row) => {
+        setDeleting(row);
+        if (!getDeleteDetails) {
+            setDeleteInfo(null);
+            return;
+        }
+        setDeleteInfo({loading: true});
+        try {
+            setDeleteInfo(await getDeleteDetails(row));
+        } catch (err) {
+            setDeleteInfo({message: getErrorMessage(err), blocked: true});
+        }
+    };
     // {message, severity}
     const [toast, setToast] = useState(null);
 
@@ -103,7 +122,7 @@ function ResourceView({
                 canDelete={canDelete}
                 onAdd={openCreate}
                 onEdit={openEdit}
-                onDelete={setDeleting}
+                onDelete={startDelete}
                 toolbar={filters}
                 initialState={gridInitialState}
             />
@@ -128,7 +147,9 @@ function ResourceView({
             <ConfirmDialog
                 open={Boolean(deleting)}
                 title={`Delete ${singular.toLowerCase()}?`}
-                message={deleting ? `"${getRowLabel(deleting)}" will be permanently deleted.` : ''}
+                message={deleteInfo?.message ?? (deleting ? `"${getRowLabel(deleting)}" will be permanently deleted.` : '')}
+                loading={Boolean(deleteInfo?.loading)}
+                confirmDisabled={Boolean(deleteInfo?.blocked || deleteInfo?.loading)}
                 onConfirm={handleDelete}
                 onClose={() => setDeleting(null)}
             />

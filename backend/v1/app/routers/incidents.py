@@ -8,6 +8,7 @@ from sqlalchemy.orm import joinedload
 
 from app.crud import apply_updates, ensure_fields_allowed, get_or_404
 from app.dependencies import get_current_user, get_db, require_admin
+from app.facility_scope import facility_of_building, incidents_in, visible_facility_ids
 from app.models import (
     Building,
     Floor,
@@ -101,9 +102,13 @@ def _actor_for(user: User, incident: Incident) -> Actor:
 def _can_see_internal_notes(user: User) -> bool:
     return user.role in (UserRole.FACILITY_ADMIN, UserRole.ENGINEER)
 
-# building is required, floor/seat optional, but each must sit inside the one above it
-async def _validate_location(db: AsyncSession, incident: Incident) -> None:
-    await get_or_404(db, Building, incident.building_id)
+# building is required, floor/seat optional, but each must sit inside the one above it.
+# engineers/employees can only report at their own facility
+async def _validate_location(db: AsyncSession, incident: Incident, user: User) -> None:
+    building = await get_or_404(db, Building, incident.building_id)
+    allowed = visible_facility_ids(user)
+    if allowed is not None and building.facility_id not in allowed:
+        raise _bad_request(f"Building '{building.name}' is not at your facility")
     if incident.floor_id is not None:
         floor = await get_or_404(db, Floor, incident.floor_id)
         if floor.building_id != incident.building_id:
@@ -115,10 +120,13 @@ async def _validate_location(db: AsyncSession, incident: Incident) -> None:
         if seat.floor_id != incident.floor_id:
             raise _bad_request(f"Seat {seat.id} is not on floor {incident.floor_id}")
 
-async def _validate_assignee(db: AsyncSession, assignee_id: int) -> None:
+# the engineer has to work at the incident's facility
+async def _validate_assignee(db: AsyncSession, assignee_id: int, building_id: int) -> None:
     assignee = await get_or_404(db, User, assignee_id)
     if assignee.role != UserRole.ENGINEER or not assignee.is_active:
         raise _bad_request(f"User '{assignee.username}' is not an active Engineer")
+    if assignee.facility_id != await facility_of_building(db, building_id):
+        raise _bad_request(f"Engineer '{assignee.username}' works at a different facility than this incident")
 
 # moves the incident to a new status: enforces the workflow, stamps lifecycle timestamps, and writes history
 def _change_status(db: AsyncSession, incident: Incident, new_status: IncidentStatus, actor: Actor, user: User) -> None:
@@ -178,6 +186,7 @@ async def list_incidents(
     status_filter: list[IncidentStatus] | None = Query(default=None, alias="status"),
     priority: list[IncidentPriority] | None = Query(default=None),
     category: list[IncidentCategory] | None = Query(default=None),
+    facility_id: list[int] | None = Query(default=None, description="admins: limit to these facilities"),
     building_id: int | None = None,
     floor_id: int | None = None,
     seat_id: int | None = None,
@@ -206,6 +215,8 @@ async def list_incidents(
         query = query.where(Incident.priority.in_(priority))
     if category:
         query = query.where(Incident.category.in_(category))
+    if facility_id and current_user.role == UserRole.FACILITY_ADMIN:
+        query = query.where(incidents_in(facility_id))
     for column, value in (
         (Incident.building_id, building_id),
         (Incident.floor_id, floor_id),
@@ -238,7 +249,7 @@ async def create_incident(
     current_user: User = Depends(get_current_user),
 ) -> Incident:
     incident = Incident(**payload.model_dump(), reporter_id=current_user.id, status=S.OPEN)
-    await _validate_location(db, incident)
+    await _validate_location(db, incident, current_user)
     db.add(incident)
     await db.flush()  # assigns incident.id for the history row
     db.add(IncidentStatusHistory(incident_id=incident.id, from_status=None, to_status=S.OPEN, changed_by_id=current_user.id))
@@ -260,14 +271,15 @@ async def update_incident(
 
     changes = payload.model_fields_set
     old_assignee_id = incident.assignee_id
-    if "assignee_id" in changes and payload.assignee_id is not None:
-        await _validate_assignee(db, payload.assignee_id)
 
     # status goes through the workflow below, every other field is copied as-is
     apply_updates(incident, payload, exclude={"status"})
 
     if changes & {"building_id", "floor_id", "seat_id"}:
-        await _validate_location(db, incident)
+        await _validate_location(db, incident, current_user)
+    # re-checked when the incident moves building too, so it can't end up with an engineer from another campus
+    if incident.assignee_id is not None and (changes & {"assignee_id", "building_id"}):
+        await _validate_assignee(db, incident.assignee_id, incident.building_id)
     if incident.assignee_id != old_assignee_id:
         incident.assigned_at = datetime.now(timezone.utc) if incident.assignee_id is not None else None
     if payload.status is not None:

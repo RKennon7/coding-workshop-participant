@@ -44,22 +44,31 @@ export function describePreviousRange(range) {
     return range.preset === 'custom' ? 'the period before' : `previous ${PRESET_DAYS[range.preset]} days`;
 }
 
-// loads GET /analytics/dashboard for the range/building, keeping the last result on screen while reloading
-export function useDashboard(range, buildingId) {
+// loads GET /analytics/dashboard for the range/facilities/building, keeping the last result on screen while reloading.
+// enabled=false holds the request (e.g. until we know an admin's home facility)
+export function useDashboard({range, facilityIds = [], buildingId = null, enabled = true}) {
     const [refreshCount, setRefreshCount] = useState(0);
-    const requestKey = JSON.stringify({range, buildingId, refreshCount});
+    const requestKey = JSON.stringify({range, facilityIds, buildingId, refreshCount});
     const [result, setResult] = useState({key: null, data: null, error: null, loadedAt: null});
 
     useEffect(() => {
+        if (!enabled) {
+            return;
+        }
         const request = JSON.parse(requestKey);
         let cancelled = false;
-        fetchDashboard({...rangeToParams(request.range), building_id: request.buildingId ?? undefined, tz: TIME_ZONE})
+        fetchDashboard({
+            ...rangeToParams(request.range),
+            facility_id: request.facilityIds,
+            building_id: request.buildingId ?? undefined,
+            tz: TIME_ZONE,
+        })
             .then((data) => !cancelled && setResult({key: requestKey, data, error: null, loadedAt: new Date()}))
             .catch((err) => !cancelled && setResult((prev) => ({...prev, key: requestKey, error: getErrorMessage(err)})));
         return () => {
             cancelled = true;
         };
-    }, [requestKey]);
+    }, [enabled, requestKey]);
 
     const refresh = useCallback(() => setRefreshCount((count) => count + 1), []);
 

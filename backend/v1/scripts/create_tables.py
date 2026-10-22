@@ -10,6 +10,15 @@ from app.database import engine
 SCHEMA_PATCHES = [
     # invited users have no password until they register
     "ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL",
+    # users belong to a facility (campus)
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS facility_id INTEGER REFERENCES facilities(id)",
+    "CREATE INDEX IF NOT EXISTS ix_users_facility_id ON users (facility_id)",
+    # databases created before facilities were per-user: put existing engineers/employees in the oldest facility.
+    # a no-op once everyone has one (the API won't create engineers/employees without a facility)
+    """
+    UPDATE users SET facility_id = (SELECT id FROM facilities ORDER BY id LIMIT 1)
+    WHERE facility_id IS NULL AND role IN ('ENGINEER', 'EMPLOYEE')
+    """,
 ]
 
 async def create_tables():

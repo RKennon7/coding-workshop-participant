@@ -1,5 +1,6 @@
 import asyncio
 import random
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
@@ -23,45 +24,88 @@ from app.models import (
 from app.security import hash_password
 from scripts.seed_users import DEFAULT_PASSWORD
 
-# Seeds a small but realistic dataset for dashboards/reporting. Safe to re-run: it skips if the
-# sample facility already exists, and reuses any users already created by seed_users.py.
+# Seeds a small but realistic dataset for dashboards/reporting: two campuses, each with its own buildings,
+# engineers, employees and incidents. Safe to re-run: each facility is skipped if it already exists, and
+# users already created by seed_users.py are reused (and moved into their facility if they have none).
 # Run from backend/v1:  python -m scripts.seed_sample_data
 
 rng = random.Random(42)  # fixed seed so every run produces the same dataset
 NOW = datetime.now(timezone.utc)
 
-FACILITY_NAME = "ACME HQ Campus"
-BUILDINGS = {"North Tower": ("NT", 3), "South Annex": ("SA", 2)}  # name -> (seat prefix, floor count)
-SEATS_PER_FLOOR = 4
-HOTSPOT_FLOOR = 2  # North Tower Floor 3 -- gets a disproportionate share of incidents
-HOTSPOT_SEAT = 1   # NT-3-02 -- the desk that keeps breaking
+@dataclass
+class FacilitySpec:
+    name: str
+    address: str
+    buildings: dict[str, tuple[str, int]]  # name -> (seat prefix, floor count)
+    seats_per_floor: int
+    hotspot_floor: int  # index into the facility's floors -- gets a disproportionate share of incidents
+    hotspot_seat: int   # seat on that floor that keeps breaking
+    engineers: list[tuple]  # (username, email, display name, specialty, available, workload weight)
+    employees: list[tuple]  # (username, email, reporting weight)
+    status_counts: dict[IncidentStatus, int]  # fixed status mix so every workflow column has data
 
+FACILITIES = [
+    FacilitySpec(
+        name="ACME HQ Campus",
+        address="100 Main St, Springfield",
+        buildings={"North Tower": ("NT", 3), "South Annex": ("SA", 2)},
+        seats_per_floor=4,
+        hotspot_floor=2,  # North Tower Floor 3
+        hotspot_seat=1,   # NT-3-02
+        engineers=[
+            ("engineer", "testengineer@acme.inc", "Test Engineer", IncidentCategory.HARDWARE, True, 4),
+            ("jordan.lee", "jordan.lee@acme.inc", "Jordan Lee", IncidentCategory.NETWORK, True, 3),
+            ("morgan.patel", "morgan.patel@acme.inc", "Morgan Patel", IncidentCategory.HVAC, True, 3),
+            ("sam.garcia", "sam.garcia@acme.inc", "Sam Garcia", IncidentCategory.ELECTRICAL, False, 1),  # on leave
+        ],
+        employees=[
+            ("employee", "testemployee@acme.inc", 3),
+            ("alex.kim", "alex.kim@acme.inc", 4),
+            ("casey.nguyen", "casey.nguyen@acme.inc", 2),
+            ("riley.brooks", "riley.brooks@acme.inc", 2),
+            ("taylor.wong", "taylor.wong@acme.inc", 1),
+            ("jamie.ortiz", "jamie.ortiz@acme.inc", 1),
+        ],
+        status_counts={
+            IncidentStatus.OPEN: 8,
+            IncidentStatus.IN_PROGRESS: 8,
+            IncidentStatus.BLOCKED: 5,
+            IncidentStatus.RESOLVED: 9,
+            IncidentStatus.CLOSED: 12,
+        },
+    ),
+    FacilitySpec(
+        name="ACME West Campus",
+        address="2500 Harbor Blvd, Bayview",
+        buildings={"Innovation Hub": ("IH", 2), "Lakeside Pavilion": ("LP", 1)},
+        seats_per_floor=6,
+        hotspot_floor=1,  # Innovation Hub Floor 2
+        hotspot_seat=3,   # IH-2-04
+        engineers=[
+            ("devon.shah", "devon.shah@acme.inc", "Devon Shah", IncidentCategory.NETWORK, True, 3),
+            ("avery.chen", "avery.chen@acme.inc", "Avery Chen", IncidentCategory.FURNITURE, True, 2),
+        ],
+        employees=[
+            ("quinn.rivera", "quinn.rivera@acme.inc", 3),
+            ("harper.ali", "harper.ali@acme.inc", 2),
+            ("rowan.price", "rowan.price@acme.inc", 2),
+            ("skyler.moss", "skyler.moss@acme.inc", 1),
+        ],
+        status_counts={
+            IncidentStatus.OPEN: 4,
+            IncidentStatus.IN_PROGRESS: 3,
+            IncidentStatus.BLOCKED: 2,
+            IncidentStatus.RESOLVED: 3,
+            IncidentStatus.CLOSED: 6,
+        },
+    ),
+]
+
+# admins span every facility, so they don't get one
 ADMINS = [("admin", "testadmin@acme.inc")]
-ENGINEERS = [
-    # username, email, display name, specialty, available, workload weight
-    ("engineer", "testengineer@acme.inc", "Test Engineer", IncidentCategory.HARDWARE, True, 4),
-    ("jordan.lee", "jordan.lee@acme.inc", "Jordan Lee", IncidentCategory.NETWORK, True, 3),
-    ("morgan.patel", "morgan.patel@acme.inc", "Morgan Patel", IncidentCategory.HVAC, True, 3),
-    ("sam.garcia", "sam.garcia@acme.inc", "Sam Garcia", IncidentCategory.ELECTRICAL, False, 1),  # on leave
-]
-EMPLOYEES = [
-    # username, email, reporting weight
-    ("employee", "testemployee@acme.inc", 3),
-    ("alex.kim", "alex.kim@acme.inc", 4),
-    ("casey.nguyen", "casey.nguyen@acme.inc", 2),
-    ("riley.brooks", "riley.brooks@acme.inc", 2),
-    ("taylor.wong", "taylor.wong@acme.inc", 1),
-    ("jamie.ortiz", "jamie.ortiz@acme.inc", 1),
-]
-
-# fixed status mix so every workflow column has data
-STATUS_COUNTS = {
-    IncidentStatus.OPEN: 8,
-    IncidentStatus.IN_PROGRESS: 8,
-    IncidentStatus.BLOCKED: 5,
-    IncidentStatus.RESOLVED: 9,
-    IncidentStatus.CLOSED: 12,
-}
+# every seeded account, for scripts/init_db.py
+ENGINEERS = [engineer for spec in FACILITIES for engineer in spec.engineers]
+EMPLOYEES = [employee for spec in FACILITIES for employee in spec.employees]
 ACTIVE_STATUSES = {IncidentStatus.OPEN, IncidentStatus.IN_PROGRESS, IncidentStatus.BLOCKED}
 DONE_STATUSES = {IncidentStatus.RESOLVED, IncidentStatus.CLOSED}
 # how long each incident has sat since its last activity, by status
@@ -188,35 +232,39 @@ def hours(lo: float, hi: float) -> timedelta:
     return timedelta(hours=rng.uniform(lo, hi))
 
 
-async def get_or_create_user(session, username: str, email: str, role: UserRole, password_hash: str) -> User:
+async def get_or_create_user(
+    session, username: str, email: str, role: UserRole, password_hash: str, facility: Facility | None = None,
+) -> User:
     user = await session.scalar(select(User).where(User.email == email))
     if user is None:
         user = User(username=username, email=email, password_hash=password_hash, role=role)
         session.add(user)
+    if facility is not None and user.facility_id is None:
+        user.facility_id = facility.id
     return user
 
 
-def build_locations() -> tuple[Facility, list[tuple[Building, Floor, list[Seat]]]]:
-    facility = Facility(name=FACILITY_NAME, address="100 Main St, Springfield")
+def build_locations(spec: FacilitySpec) -> tuple[Facility, list[tuple[Building, Floor, list[Seat]]]]:
+    facility = Facility(name=spec.name, address=spec.address)
     locations = []
-    for building_name, (prefix, floor_count) in BUILDINGS.items():
+    for building_name, (prefix, floor_count) in spec.buildings.items():
         building = Building(name=building_name)
         facility.buildings.append(building)
         for floor_number in range(1, floor_count + 1):
-            seats = [Seat(code=f"{prefix}-{floor_number}-{n:02d}") for n in range(1, SEATS_PER_FLOOR + 1)]
+            seats = [Seat(code=f"{prefix}-{floor_number}-{n:02d}") for n in range(1, spec.seats_per_floor + 1)]
             floor = Floor(name=f"Floor {floor_number}", seats=seats)
             building.floors.append(floor)
             locations.append((building, floor, seats))
     return facility, locations
 
 
-def pick_location(category: IncidentCategory, locations) -> tuple[Building, Floor, Seat | None]:
+def pick_location(category: IncidentCategory, spec: FacilitySpec, locations) -> tuple[Building, Floor, Seat | None]:
     roll = rng.random()
-    building, floor, seats = locations[HOTSPOT_FLOOR] if roll < 0.4 else rng.choice(locations)
+    building, floor, seats = locations[spec.hotspot_floor] if roll < 0.4 else rng.choice(locations)
     if category in AREA_CATEGORIES:
         return building, floor, None
     if roll < 0.25:
-        return building, floor, seats[HOTSPOT_SEAT]
+        return building, floor, seats[spec.hotspot_seat]
     return building, floor, rng.choice(seats) if rng.random() < 0.7 else None
 
 
@@ -228,11 +276,11 @@ def pick_engineer(category: IncidentCategory, engineers, available_only: bool) -
     return rng.choices([user for user, _, _ in pool], weights=[weight for _, _, weight in pool])[0]
 
 
-def build_incident(status: IncidentStatus, admin: User, engineers, employees, locations) -> Incident:
+def build_incident(status: IncidentStatus, admin: User, spec: FacilitySpec, engineers, employees, locations) -> Incident:
     category = rng.choices(list(CATEGORY_WEIGHTS), weights=list(CATEGORY_WEIGHTS.values()))[0]
     title, description = rng.choice(TEMPLATES[category])
     priority = rng.choices(list(PRIORITY_WEIGHTS), weights=list(PRIORITY_WEIGHTS.values()))[0]
-    building, floor, seat = pick_location(category, locations)
+    building, floor, seat = pick_location(category, spec, locations)
     reporter = rng.choices([user for user, _ in employees], weights=[weight for _, weight in employees])[0]
 
     escalation_reason = None
@@ -336,46 +384,47 @@ def build_incident(status: IncidentStatus, admin: User, engineers, employees, lo
     )
 
 
+async def seed_facility(session, spec: FacilitySpec, admin: User, password_hash: str) -> str:
+    facility, locations = build_locations(spec)
+    session.add(facility)
+    await session.flush()  # assign ids so users and incidents can reference the facility and its locations
+
+    engineers = []
+    for username, email, display_name, specialty, available, weight in spec.engineers:
+        user = await get_or_create_user(session, username, email, UserRole.ENGINEER, password_hash, facility)
+        await session.flush()
+        profile = await session.scalar(select(EngineerProfile).where(EngineerProfile.user_id == user.id))
+        if profile is None:
+            profile = EngineerProfile(user_id=user.id, display_name=display_name, specialty=specialty, is_available=available)
+            session.add(profile)
+        engineers.append((user, profile, weight))
+    employees = [
+        (await get_or_create_user(session, username, email, UserRole.EMPLOYEE, password_hash, facility), weight)
+        for username, email, weight in spec.employees
+    ]
+    await session.flush()
+
+    statuses = [status for status, count in spec.status_counts.items() for _ in range(count)]
+    rng.shuffle(statuses)
+    incidents = [build_incident(status, admin, spec, engineers, employees, locations) for status in statuses]
+    session.add_all(incidents)
+    return (
+        f"{spec.name}: {len(spec.buildings)} buildings, {len(locations)} floors, "
+        f"{len(locations) * spec.seats_per_floor} seats, {len(engineers)} engineers, {len(employees)} employees, "
+        f"{len(incidents)} incidents, {sum(len(i.notes) for i in incidents)} notes."
+    )
+
+
 async def seed_sample_data(password_hash: str | None = None) -> None:
+    password_hash = password_hash or hash_password(DEFAULT_PASSWORD)
     async with AsyncSessionLocal() as session:
-        if await session.scalar(select(Facility).where(Facility.name == FACILITY_NAME)):
-            print(f"'{FACILITY_NAME}' already exists, skipping sample data.")
-            return
-
-        password_hash = password_hash or hash_password(DEFAULT_PASSWORD)
         admin = await get_or_create_user(session, *ADMINS[0], UserRole.FACILITY_ADMIN, password_hash)
-        engineer_users = [
-            await get_or_create_user(session, username, email, UserRole.ENGINEER, password_hash)
-            for username, email, *_ in ENGINEERS
-        ]
-        employees = [
-            (await get_or_create_user(session, username, email, UserRole.EMPLOYEE, password_hash), weight)
-            for username, email, weight in EMPLOYEES
-        ]
-        facility, locations = build_locations()
-        session.add(facility)
-        await session.flush()  # assign ids so incidents can reference users and locations
-
-        engineers = []
-        for user, (_, _, display_name, specialty, available, weight) in zip(engineer_users, ENGINEERS):
-            profile = await session.scalar(select(EngineerProfile).where(EngineerProfile.user_id == user.id))
-            if profile is None:
-                profile = EngineerProfile(user_id=user.id, display_name=display_name, specialty=specialty, is_available=available)
-                session.add(profile)
-            engineers.append((user, profile, weight))
-
-        statuses = [status for status, count in STATUS_COUNTS.items() for _ in range(count)]
-        rng.shuffle(statuses)
-        incidents = [build_incident(status, admin, engineers, employees, locations) for status in statuses]
-        session.add_all(incidents)
+        for spec in FACILITIES:
+            if await session.scalar(select(Facility).where(Facility.name == spec.name)):
+                print(f"'{spec.name}' already exists, skipping its sample data.")
+                continue
+            print("Seeded " + await seed_facility(session, spec, admin, password_hash))
         await session.commit()
-
-        print(
-            f"Seeded 1 facility, {len(BUILDINGS)} buildings, {len(locations)} floors, "
-            f"{len(locations) * SEATS_PER_FLOOR} seats, {len(engineers)} engineers, {len(employees)} employees, "
-            f"{len(incidents)} incidents, {sum(len(i.notes) for i in incidents)} notes."
-        )
-
 
 if __name__ == "__main__":
     asyncio.run(seed_sample_data())

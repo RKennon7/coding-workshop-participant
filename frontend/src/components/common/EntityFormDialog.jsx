@@ -8,7 +8,7 @@ import { getErrorMessage } from '../../hooks/useResource.js';
 {/**
  * add/edit form generated from a list of field definitions:
  *   {name, label, type: 'text'|'textarea'|'number'|'email'|'password'|'select'|'checkbox',
- *    options: [{value, label}] or (values, initialValues) => options, required,
+ *    options: [{value, label}] or (values, initialValues) => options, required (bool or (values) => bool),
  *    hideOnCreate, createOnly, hidden: (values) => bool, dependsOn: 'otherFieldName'}
  * isFieldEditable(field) decides which inputs are enabled, so the same form works for
  * full edits, partial edits (e.g. engineers changing status) and read-only viewing.
@@ -106,6 +106,7 @@ function EntityFormDialog({
         }
 
         const options = typeof field.options === 'function' ? field.options(values, initialValues) : field.options;
+        const required = typeof field.required === 'function' ? field.required(values) : field.required;
         return (
             <TextField
                 key={field.name}
@@ -114,7 +115,7 @@ function EntityFormDialog({
                 type={['number', 'email', 'password'].includes(field.type) ? field.type : 'text'}
                 value={value ?? ''}
                 onChange={(e) => setValue(field.name, e.target.value)}
-                required={field.required && !disabled}
+                required={required && !disabled}
                 disabled={disabled}
                 select={field.type === 'select'}
                 multiline={field.type === 'textarea'}
@@ -123,7 +124,7 @@ function EntityFormDialog({
                 fullWidth
             >
                 {field.type === 'select' && [
-                    !field.required && <MenuItem key="__none" value=""><em>None</em></MenuItem>,
+                    !required && <MenuItem key="__none" value=""><em>None</em></MenuItem>,
                     ...(options ?? []).map((option) => (
                         <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
                     )),

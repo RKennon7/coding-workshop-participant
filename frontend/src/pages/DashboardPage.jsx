@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Alert, Box, Button, Grid, LinearProgress, Skeleton, Stack, Typography } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import ConfirmationNumberIcon from '@mui/icons-material/ConfirmationNumber';
@@ -28,11 +28,17 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { useNavigation } from '../context/NavigationContext.jsx';
 import { DEFAULT_RANGE, describePreviousRange, describeRange, useDashboard } from '../hooks/useDashboard.js';
 import { usePermissions } from '../hooks/usePermissions.js';
-import { useOptions } from '../hooks/useResource.js';
-import { buildingsService } from '../services/index.js';
+import { toLabelMap, useOptions } from '../hooks/useResource.js';
+import { buildingsService, facilitiesService } from '../services/index.js';
 import { formatDuration } from '../utils/format.js';
 
 const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+
+// "All facilities", "ACME HQ Campus", "ACME HQ Campus + ACME West Campus"
+function describeFacilities(ids, names) {
+    if (!ids.length) return 'All facilities';
+    return ids.map((id) => names[id] ?? `Facility #${id}`).join(' + ');
+}
 
 // heading above a group of cards. detail is a muted note after the title, e.g. the date range
 function SectionLabel({children, detail}) {
@@ -86,7 +92,7 @@ function TileRow({tiles}) {
 
 function AdminDashboard({data, ctx, attentionRef}) {
     const {current, period, communication} = data;
-    const {openIncidents, openIncident, showAttention, attention, rangeLabel, compareTo} = ctx;
+    const {openIncidents, openIncident, showAttention, attention, rangeLabel, compareTo, showFacility, facilityNames} = ctx;
 
     return (
         <Stack spacing={2}>
@@ -126,7 +132,7 @@ function AdminDashboard({data, ctx, attentionRef}) {
 
             <Grid container spacing={2}>
                 <Grid size={{xs: 12, md: 7}} ref={attentionRef} sx={{scrollMarginTop: 16}}>
-                    <AttentionList tickets={data.attention} filter={attention.filter} onFilterChange={attention.setFilter} onOpen={openIncident} />
+                    <AttentionList tickets={data.attention} filter={attention.filter} onFilterChange={attention.setFilter} onOpen={openIncident} showFacility={showFacility} />
                 </Grid>
                 <Grid size={{xs: 12, md: 5}}>
                     <SlaCard sla={period.sla} current={current} rangeLabel={rangeLabel} compareTo={compareTo} onShowBreached={() => showAttention('sla_breached')} />
@@ -157,11 +163,12 @@ function AdminDashboard({data, ctx, attentionRef}) {
                     <WorkloadCard
                         engineers={data.workload}
                         rangeLabel={rangeLabel}
+                        facilityNames={showFacility ? facilityNames : null}
                         onSelect={(engineer) => openIncidents({status: ACTIVE_STATUSES, assignee_id: engineer.user_id})}
                     />
                 </Grid>
                 <Grid size={{xs: 12, md: 5}}>
-                    <HotspotsCard hotspots={period.hotspots} rangeLabel={rangeLabel} onSelect={openIncidents} />
+                    <HotspotsCard hotspots={period.hotspots} rangeLabel={rangeLabel} onSelect={openIncidents} showFacility={showFacility} />
                 </Grid>
             </Grid>
         </Stack>
@@ -290,25 +297,51 @@ function LoadingSkeleton() {
  */}
 function DashboardPage() {
     const {role} = usePermissions();
-    const {user} = useAuth();
+    const {user, profile} = useAuth();
     const {navigate} = useNavigation();
     const isAdmin = role === ROLES.FACILITY_ADMIN;
     const isEmployee = role === ROLES.EMPLOYEE;
 
     // employees only see live state + all-time response speed, so they get no range picker
     const [range, setRange] = useState(isEmployee ? {preset: 'all'} : DEFAULT_RANGE);
+    // null until the admin picks: then they start on their home facility (if they have one), else all facilities
+    const [pickedFacilityIds, setPickedFacilityIds] = useState(null);
+    const facilityIds = pickedFacilityIds ?? (profile?.facility_id ? [profile.facility_id] : []);
     const [buildingId, setBuildingId] = useState(null);
     const [attentionFilter, setAttentionFilter] = useState(null);
     const attentionRef = useRef(null);
-    const buildingOptions = useOptions(buildingsService, (b) => b.name, {enabled: isAdmin});
-    const {data, error, loading, loadedAt, refresh} = useDashboard(range, buildingId);
+    const facilityOptions = useOptions(facilitiesService, (f) => f.name, {enabled: isAdmin});
+    const allBuildingOptions = useOptions(buildingsService, (b) => b.name, {enabled: isAdmin});
+    const buildingOptions = useMemo(() => (facilityIds.length
+        ? allBuildingOptions.filter((o) => facilityIds.includes(o.row.facility_id))
+        : allBuildingOptions), [allBuildingOptions, facilityIds]);
+    const {data, error, loading, loadedAt, refresh} = useDashboard({
+        range, facilityIds: isAdmin ? facilityIds : [], buildingId,
+        // wait for the profile so an admin's first load is already on their home facility
+        enabled: !isAdmin || profile !== undefined,
+    });
+
+    const changeFacilities = (ids) => {
+        setPickedFacilityIds(ids);
+        const stillVisible = allBuildingOptions.some((o) => o.value === buildingId && (!ids.length || ids.includes(o.row.facility_id)));
+        if (!stillVisible) setBuildingId(null);
+    };
+    // more than one campus on screen: label locations and engineers with their facility
+    const facilityNames = toLabelMap(facilityOptions);
+    const showFacility = isAdmin && facilityOptions.length > 1 && facilityIds.length !== 1;
 
     const rangeLabel = describeRange(range);
     const ctx = {
         rangeLabel,
         compareTo: describePreviousRange(range),
-        // drill-down keeps the dashboard's building filter
-        openIncidents: (filters) => navigate('incidents', {filters: {...(buildingId != null && {building_id: buildingId}), ...filters}}),
+        showFacility,
+        facilityNames,
+        // drill-down keeps the dashboard's facility/building filters
+        openIncidents: (filters) => navigate('incidents', {filters: {
+            ...(isAdmin && facilityIds.length && {facility_id: facilityIds}),
+            ...(buildingId != null && {building_id: buildingId}),
+            ...filters,
+        }}),
         openIncident: (incidentId) => navigate('incidents', {incidentId}),
         showAttention: (kind) => {
             setAttentionFilter(kind);
@@ -319,8 +352,8 @@ function DashboardPage() {
 
     const updated = loadedAt ? ` · updated ${loadedAt.toLocaleTimeString(undefined, {timeStyle: 'short'})}` : '';
     const titles = {
-        [ROLES.FACILITY_ADMIN]: ['Operations dashboard', `Facility-wide incidents${updated}`],
-        [ROLES.ENGINEER]: ['My dashboard', `Your assigned tickets and team capacity${updated}`],
+        [ROLES.FACILITY_ADMIN]: ['Operations dashboard', `${describeFacilities(facilityIds, facilityNames)}${updated}`],
+        [ROLES.ENGINEER]: ['My dashboard', `Your assigned tickets and team capacity${profile?.facility_name ? ` at ${profile.facility_name}` : ''}${updated}`],
         [ROLES.EMPLOYEE]: [`Hi ${user?.sub ?? 'there'}`, `Here's where your reported issues stand${updated}`],
     };
     const [title, subtitle] = titles[role] ?? titles[ROLES.EMPLOYEE];
@@ -332,6 +365,9 @@ function DashboardPage() {
                 subtitle={subtitle}
                 range={isEmployee ? null : range}
                 onRangeChange={setRange}
+                facilityOptions={isAdmin && facilityOptions.length > 1 ? facilityOptions : null}
+                facilityIds={facilityIds}
+                onFacilityChange={changeFacilities}
                 buildingOptions={isAdmin ? buildingOptions : null}
                 buildingId={buildingId}
                 onBuildingChange={setBuildingId}

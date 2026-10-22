@@ -39,6 +39,7 @@ class CurrentSnapshot(BaseModel):
     awaiting_reporter: int     # Resolved, waiting on the reporter to close or reopen
 
 class LocationRef(BaseModel):
+    facility: str
     building: str
     floor: str | None = None
     seat: str | None = None
@@ -98,6 +99,7 @@ class HotspotItem(BaseModel):
     id: int
     label: str
     building_id: int
+    facility: str
     count: int
     active: int
     top_category: IncidentCategory
@@ -131,6 +133,7 @@ class Communication(BaseModel):
 class EngineerLoad(BaseModel):
     user_id: int
     display_name: str
+    facility_id: int | None
     specialty: IncidentCategory | None
     is_available: bool
     max_open_tickets: int
@@ -148,6 +151,7 @@ class DashboardRange(BaseModel):
 class Dashboard(BaseModel):
     scope: DashboardScope
     range: DashboardRange
+    facility_ids: list[int] | None  # admin's facility filter, None = all
     building_id: int | None
     sla_targets_hours: dict[IncidentPriority, float]
     current: CurrentSnapshot

@@ -5,7 +5,7 @@ import ColorModeToggle from './ColorModeToggle.jsx';
 
 {/** top bar shown on every authenticated page: app title, current user + role, logout. compacts on phones */}
 function AppHeader(){
-    const {user, logout} = useAuth();
+    const {user, profile, logout} = useAuth();
 
     return (
         <AppBar position="static">
@@ -22,6 +22,11 @@ function AppHeader(){
                             variant="outlined"
                             sx={{color: 'inherit', borderColor: 'currentColor'}}
                         />
+                        {profile?.facility_name && (
+                            <Typography variant="body2" color="text.secondary" noWrap sx={{display: {xs: 'none', md: 'block'}}}>
+                                {profile.facility_name}
+                            </Typography>
+                        )}
                     </Box>
                 )}
                 <Button color="inherit" startIcon={<LogoutIcon />} onClick={logout} sx={{display: {xs: 'none', sm: 'inline-flex'}}}>

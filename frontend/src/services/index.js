@@ -2,6 +2,11 @@ import apiClient from '../api/client.js';
 import { createResource } from './resourceService.js';
 
 export const facilitiesService = createResource('/facilities');
+// a whole facility with generated floors/seats in one go, or more buildings for an existing one
+export const setupFacility = (data) => apiClient.post('/facilities/setup', data).then((res) => res.data);
+// counts of what deleting a facility/building/floor/seat would remove, path e.g. '/buildings'
+export const fetchDeleteImpact = (path, id) => apiClient.get(`${path}/${id}/delete-impact`).then((res) => res.data);
+export const addBuildingsBulk = (facilityId, data) => apiClient.post(`/facilities/${facilityId}/buildings/bulk`, data).then((res) => res.data);
 export const buildingsService = createResource('/buildings');
 export const floorsService = createResource('/floors');
 export const seatsService = createResource('/seats');

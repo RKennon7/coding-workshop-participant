@@ -47,6 +47,24 @@ export function AuthProvider({children}) {
     // payload: {sub: username, uid: user id, role, exp}
     const user = useMemo(() => (token ? decodeToken(token): null), [token]);
 
+    // GET /auth/me, for what isn't in the token (facility). tagged with the token it was loaded for,
+    // so a stale profile is never shown after logging in as someone else
+    const [me, setMe] = useState({token: null, profile: null});
+    useEffect(() => {
+        if (!token) {
+            return;
+        }
+        let cancelled = false;
+        apiClient.get('/auth/me')
+            .then((res) => !cancelled && setMe({token, profile: res.data}))
+            .catch(() => !cancelled && setMe({token, profile: null}));
+        return () => {
+            cancelled = true;
+        };
+    }, [token]);
+    // undefined while loading, then {facility_id, facility_name, ...} (or null if it couldn't load)
+    const profile = token && me.token === token ? me.profile : undefined;
+
     const storeToken = (accessToken) => {
         localStorage.setItem('accessToken', accessToken);
         setSessionExpired(false);
@@ -99,7 +117,7 @@ export function AuthProvider({children}) {
 
     // bundles auth state variables and action functions into a single object to define
     // the exact interface exposed to components that are consuming this context
-    const value = {token, user, isAuthenticated: Boolean(token), sessionExpired, login, register, logout};
+    const value = {token, user, profile, isAuthenticated: Boolean(token), sessionExpired, login, register, logout};
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
