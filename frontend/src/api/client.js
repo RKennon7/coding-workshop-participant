@@ -23,6 +23,8 @@ function resolveBaseURL() {
 //axios.create is a function that builds a reusable pre-configured client
 const apiClient = axios.create({
     baseURL: resolveBaseURL(),
+    // repeat list params the way FastAPI reads them: ?status=Open&status=Blocked (not status[]=...)
+    paramsSerializer: {indexes: null},
 });
 
 apiClient.interceptors.request.use((config) => {

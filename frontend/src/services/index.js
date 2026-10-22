@@ -18,3 +18,6 @@ export const incidentNotesService = (incidentId) => createResource(`/incidents/$
 
 // status change trail for one incident, oldest first
 export const fetchIncidentHistory = (incidentId) => apiClient.get(`/incidents/${incidentId}/history`).then((res) => res.data);
+
+// everything the dashboard shows, scoped to the logged in user. params: {start, end, building_id, tz}
+export const fetchDashboard = (params) => apiClient.get('/analytics/dashboard', {params}).then((res) => res.data);

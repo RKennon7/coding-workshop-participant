@@ -67,7 +67,7 @@ function IncidentNotes({incidentId, closed = false}) {
                 )}
                 {notes.map((note) => (
                     <Box key={note.id} sx={{p: 1.5, borderRadius: 1, bgcolor: 'action.hover'}}>
-                        <Stack direction="row" spacing={1} alignItems="center" sx={{mb: 0.5}}>
+                        <Stack direction="row" spacing={1} sx={{alignItems: 'center', mb: 0.5}}>
                             <Typography variant="body2" fontWeight={600}>
                                 {note.author?.username ?? `User #${note.author_id}`}
                             </Typography>
@@ -105,7 +105,7 @@ function IncidentNotes({incidentId, closed = false}) {
                         fullWidth
                         disabled={saving}
                     />
-                    <Stack direction="row" justifyContent="space-between" alignItems="center">
+                    <Stack direction="row" sx={{justifyContent: 'space-between', alignItems: 'center'}}>
                         {canSeeInternal ? (
                             <FormControlLabel
                                 label="Internal (hidden from employees)"

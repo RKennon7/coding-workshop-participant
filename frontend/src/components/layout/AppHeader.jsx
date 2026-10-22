@@ -1,32 +1,37 @@
-import { AppBar, Box, Button, Chip, Toolbar, Typography } from '@mui/material';
+import { AppBar, Box, Button, Chip, IconButton, Toolbar, Tooltip, Typography } from '@mui/material';
 import LogoutIcon from '@mui/icons-material/Logout';
 import { useAuth } from '../../context/AuthContext.jsx';
 import ColorModeToggle from './ColorModeToggle.jsx';
 
-{/** top bar shown on every authenticated page: app title, current user + role, logout */}
+{/** top bar shown on every authenticated page: app title, current user + role, logout. compacts on phones */}
 function AppHeader(){
     const {user, logout} = useAuth();
 
     return (
         <AppBar position="static">
-            <Toolbar>
-                <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
+            <Toolbar sx={{gap: 1}}>
+                <Typography variant="h6" component="div" noWrap sx={{flexGrow: 1}}>
                     Acme.inc
                 </Typography>
                 {user && (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mr: 2 }}>
-                        <Typography variant="body1">{user.sub}</Typography>
+                    <Box sx={{display: 'flex', alignItems: 'center', gap: 1, minWidth: 0}}>
+                        <Typography variant="body1" noWrap sx={{display: {xs: 'none', sm: 'block'}}}>{user.sub}</Typography>
                         <Chip
                             label={user.role}
                             size="small"
                             variant="outlined"
-                            sx={{ color: 'inherit', borderColor: 'currentColor' }}
+                            sx={{color: 'inherit', borderColor: 'currentColor'}}
                         />
                     </Box>
                 )}
-                <Button color="inherit" startIcon={<LogoutIcon />} onClick={logout}>
+                <Button color="inherit" startIcon={<LogoutIcon />} onClick={logout} sx={{display: {xs: 'none', sm: 'inline-flex'}}}>
                     Log Out
                 </Button>
+                <Tooltip title="Log out">
+                    <IconButton color="inherit" onClick={logout} aria-label="Log out" sx={{display: {xs: 'inline-flex', sm: 'none'}}}>
+                        <LogoutIcon />
+                    </IconButton>
+                </Tooltip>
                 <ColorModeToggle />
             </Toolbar>
         </AppBar>

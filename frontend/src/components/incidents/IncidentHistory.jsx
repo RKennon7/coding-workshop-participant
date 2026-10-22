@@ -24,9 +24,9 @@ function IncidentHistory({incidentId, currentStatus}) {
         <Box>
             <Divider sx={{mb: 2}} />
             <Typography variant="subtitle1" gutterBottom>Workflow</Typography>
-            <Stack direction="row" spacing={0.5} alignItems="center" useFlexGap flexWrap="wrap" sx={{mb: 2}}>
+            <Stack direction="row" spacing={0.5} useFlexGap sx={{alignItems: 'center', flexWrap: 'wrap', mb: 2}}>
                 {INCIDENT_STATUSES.map((status, index) => (
-                    <Stack key={status} direction="row" spacing={0.5} alignItems="center">
+                    <Stack key={status} direction="row" spacing={0.5} sx={{alignItems: 'center'}}>
                         {index > 0 && <ArrowForwardIcon fontSize="inherit" color="disabled" />}
                         <Chip
                             label={status}

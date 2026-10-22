@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, Snackbar } from '@mui/material';
 import DataTable from './DataTable.jsx';
 import EntityFormDialog from './EntityFormDialog.jsx';
 import ConfirmDialog from './ConfirmDialog.jsx';
 import { usePermissions } from '../../hooks/usePermissions.js';
-import { useResource } from '../../hooks/useResource.js';
+import { getErrorMessage, useResource } from '../../hooks/useResource.js';
 
 {/**
  * full CRUD screen for one resource: DataTable + add/edit form + delete confirmation
@@ -14,6 +14,10 @@ import { useResource } from '../../hooks/useResource.js';
  *    to allow partial edits, e.g. status editable by INCIDENTS_UPDATE or INCIDENTS_UPDATE_STATUS,
  *    or editableBy: (row) => boolean when it depends on the row (e.g. only the ticket's assignee)
  *  - renderFormExtras(row): extra content under the form when editing an existing row (e.g. notes)
+ *  - listParams: query params for the list call (e.g. filters), the grid reloads when they change
+ *  - filters: content shown between the title and the grid (e.g. a filter bar)
+ *  - gridInitialState: passed to the DataGrid's initialState (e.g. hidden columns)
+ *  - openRowId / initialCreate: open that row's form (or the create form) on mount, e.g. when the dashboard links here
  */}
 function ResourceView({
     title,
@@ -24,14 +28,34 @@ function ResourceView({
     permissions,
     getRowLabel = (row) => row.name ?? `#${row.id}`,
     renderFormExtras,
+    listParams,
+    filters,
+    gridInitialState,
+    openRowId = null,
+    initialCreate = false,
 }) {
     const {can, canAny} = usePermissions();
-    const {rows, loading, error, create, update, remove} = useResource(service);
+    const {rows, loading, error, create, update, remove} = useResource(service, {params: listParams});
 
     // form state: null = closed, otherwise {mode, row}
-    const [form, setForm] = useState(null);
+    const [form, setForm] = useState(() => (initialCreate ? {mode: 'create', row: {}} : null));
     const [deleting, setDeleting] = useState(null);
+    // {message, severity}
     const [toast, setToast] = useState(null);
+
+    // deep link: fetch the row (it may be filtered out of the grid) and open its form
+    useEffect(() => {
+        if (openRowId == null) {
+            return;
+        }
+        let cancelled = false;
+        service.get(openRowId)
+            .then((row) => !cancelled && setForm({mode: 'edit', row}))
+            .catch((err) => !cancelled && setToast({message: getErrorMessage(err), severity: 'error'}));
+        return () => {
+            cancelled = true;
+        };
+    }, [openRowId, service]);
 
     const canCreate = can(permissions.create);
     const canDelete = can(permissions.delete);
@@ -47,7 +71,7 @@ function ResourceView({
     const handleSubmit = async (values) => {
         if (form.mode === 'create') {
             await create(values);
-            setToast(`${singular} created`);
+            setToast({message: `${singular} created`, severity: 'success'});
             return;
         }
         // PATCH only what changed
@@ -56,13 +80,13 @@ function ResourceView({
         );
         if (Object.keys(changes).length > 0) {
             await update(form.row.id, changes);
-            setToast(`${singular} updated`);
+            setToast({message: `${singular} updated`, severity: 'success'});
         }
     };
 
     const handleDelete = async () => {
         await remove(deleting.id);
-        setToast(`${singular} deleted`);
+        setToast({message: `${singular} deleted`, severity: 'success'});
     };
 
     return (
@@ -80,6 +104,8 @@ function ResourceView({
                 onAdd={openCreate}
                 onEdit={openEdit}
                 onDelete={setDeleting}
+                toolbar={filters}
+                initialState={gridInitialState}
             />
 
             {form && (
@@ -113,7 +139,7 @@ function ResourceView({
                 onClose={() => setToast(null)}
                 anchorOrigin={{vertical: 'bottom', horizontal: 'center'}}
             >
-                <Alert severity="success" variant="filled" onClose={() => setToast(null)}>{toast}</Alert>
+                <Alert severity={toast?.severity ?? 'success'} variant="filled" onClose={() => setToast(null)}>{toast?.message}</Alert>
             </Snackbar>
         </>
     );

@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from mangum import Mangum
 from sqlalchemy.exc import IntegrityError
 
-from app.routers import auth, engineers, facilities, incidents, users
+from app.routers import analytics, auth, engineers, facilities, incidents, users
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,7 @@ for router in facilities.routers:
     app.include_router(router)
 app.include_router(engineers.router)
 app.include_router(incidents.router)
+app.include_router(analytics.router)
 
 #A simple health check endpoint to verify that the API is running.
 @app.get("/health", tags=["health"])

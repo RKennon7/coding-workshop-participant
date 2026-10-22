@@ -15,44 +15,44 @@ export function getErrorMessage(error) {
 
 // loads a resource's rows and wraps its create/update/remove calls so the list
 // reloads after every change. service comes from services/index.js
-export function useResource(service, {enabled = true} = {}) {
-    const [rows, setRows] = useState([]);
-    const [loading, setLoading] = useState(enabled);
-    const [error, setError] = useState(null);
+// params are sent as query params on list() (e.g. filters), and the list reloads when they change
+export function useResource(service, {enabled = true, params} = {}) {
+    // params are usually built inline, so compare them by value instead of by reference
+    const paramsKey = JSON.stringify(params ?? {});
+    // rows/error from the last finished request, tagged with the params they were loaded for
+    const [result, setResult] = useState({key: null, rows: [], error: null});
+    const [reloading, setReloading] = useState(false);
 
     const reload = useCallback(async () => {
-        setLoading(true);
-        setError(null);
+        setReloading(true);
         try {
-            setRows(await service.list());
+            const rows = await service.list(JSON.parse(paramsKey));
+            setResult({key: paramsKey, rows, error: null});
         } catch (err) {
-            setError(getErrorMessage(err));
+            setResult((prev) => ({...prev, error: getErrorMessage(err)}));
         } finally {
-            setLoading(false);
+            setReloading(false);
         }
-    }, [service]);
+    }, [service, paramsKey]);
 
-    // initial load (and again if the service changes). state is only set once the request settles,
+    // initial load (and again if the service or params change). state is only set once the request settles,
     // never synchronously inside the effect, and responses that arrive after the component moved on
-    // (unmounted, or switched to another service) are ignored
+    // (unmounted, or switched to other params) are ignored
     useEffect(() => {
         if (!enabled) {
             return;
         }
         let cancelled = false;
-        service.list()
-            .then((data) => {
-                if (!cancelled) {
-                    setRows(data);
-                    setError(null);
-                }
-            })
-            .catch((err) => !cancelled && setError(getErrorMessage(err)))
-            .finally(() => !cancelled && setLoading(false));
+        service.list(JSON.parse(paramsKey))
+            .then((rows) => !cancelled && setResult({key: paramsKey, rows, error: null}))
+            .catch((err) => !cancelled && setResult((prev) => ({key: paramsKey, rows: prev.rows, error: getErrorMessage(err)})));
         return () => {
             cancelled = true;
         };
-    }, [enabled, service]);
+    }, [enabled, service, paramsKey]);
+
+    // loading until the current params' request has finished (stale rows stay visible meanwhile)
+    const loading = enabled && (result.key !== paramsKey || reloading);
 
     const create = async (data) => {
         const created = await service.create(data);
@@ -71,7 +71,7 @@ export function useResource(service, {enabled = true} = {}) {
         await reload();
     };
 
-    return {rows, loading, error, reload, create, update, remove};
+    return {rows: result.rows, loading, error: result.error, reload, create, update, remove};
 }
 
 // turns a resource's rows into select options: [{value, label, row}]

@@ -1,8 +1,10 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import { useMediaQuery } from '@mui/material';
 import ResourceView from '../components/common/ResourceView.jsx';
 import EnumChip from '../components/common/EnumChip.jsx';
 import IncidentNotes from '../components/incidents/IncidentNotes.jsx';
 import IncidentHistory from '../components/incidents/IncidentHistory.jsx';
+import IncidentFilters from '../components/incidents/IncidentFilters.jsx';
 import { PERMISSIONS } from '../auth/permissions.js';
 import { canEditIncidentField, statusChoices } from '../auth/incidentRules.js';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -12,9 +14,13 @@ import { buildingsService, engineersService, floorsService, incidentsService, se
 import {
     INCIDENT_CATEGORIES, INCIDENT_PRIORITIES, INCIDENT_STATUSES, PRIORITY_COLORS, STATUS_COLORS, toOptions,
 } from '../constants/enums.js';
-import { formatDateTime } from '../utils/format.js';
+import { formatDate, formatDateTime } from '../utils/format.js';
+import { toListParams } from '../utils/filters.js';
 
 const P = PERMISSIONS;
+
+// hidden by default on tablets/phones (users can turn them back on from the grid's column menu)
+const COMPACT_HIDDEN_COLUMNS = {category: false, reporter_id: false, building_id: false, is_escalated: false, created_at: false};
 
 // the select needs the current assignee among its options even when the user can't list engineers
 function withCurrentAssignee(options, incident) {
@@ -25,9 +31,18 @@ function withCurrentAssignee(options, incident) {
     return [...options, {value: assignee.id, label: assignee.username}];
 }
 
-function IncidentsPage() {
+{/**
+ * params (from the dashboard, via MainLayout):
+ *  - filters: initial filter values, see IncidentFilters
+ *  - incidentId: open that incident's form straight away
+ *  - create: open the "new incident" form straight away
+ */}
+function IncidentsPage({params}) {
     const {can} = usePermissions();
     const {user} = useAuth();
+    const [filters, setFilters] = useState(() => params?.filters ?? {});
+    const compact = useMediaQuery((theme) => theme.breakpoints.down('md'), {noSsr: true});
+    const listParams = useMemo(() => toListParams(filters), [filters]);
 
     const buildingOptions = useOptions(buildingsService, (b) => b.name);
     const floorOptions = useOptions(floorsService, (f) => f.name);
@@ -42,33 +57,36 @@ function IncidentsPage() {
         const buildings = toLabelMap(buildingOptions);
         const engineers = toLabelMap(engineerOptions);
         return [
-            {field: 'id', headerName: 'ID', width: 70},
-            {field: 'title', headerName: 'Title', flex: 2, minWidth: 200},
+            // flex columns share the leftover width, minWidths keep the whole grid under ~1200px so it fits a laptop
+            {field: 'id', headerName: 'ID', width: 64},
+            {field: 'title', headerName: 'Title', flex: 2, minWidth: 170},
             {
-                field: 'status', headerName: 'Status', width: 130,
+                field: 'status', headerName: 'Status', width: 118,
                 type: 'singleSelect', valueOptions: INCIDENT_STATUSES,
                 renderCell: ({value}) => <EnumChip value={value} colors={STATUS_COLORS} />,
             },
             {
-                field: 'priority', headerName: 'Priority', width: 110,
+                field: 'priority', headerName: 'Priority', width: 100,
                 type: 'singleSelect', valueOptions: INCIDENT_PRIORITIES,
                 renderCell: ({value}) => <EnumChip value={value} colors={PRIORITY_COLORS} />,
             },
-            {field: 'category', headerName: 'Category', width: 150, type: 'singleSelect', valueOptions: INCIDENT_CATEGORIES},
-            {field: 'reporter_id', headerName: 'Reporter', width: 140, valueGetter: (value, row) => row.reporter?.username ?? value},
+            {field: 'category', headerName: 'Category', flex: 1, minWidth: 120, type: 'singleSelect', valueOptions: INCIDENT_CATEGORIES},
+            {field: 'reporter_id', headerName: 'Reporter', flex: 1, minWidth: 105, valueGetter: (value, row) => row.reporter?.username ?? value},
             {
-                field: 'building_id', headerName: 'Building', width: 150,
+                field: 'building_id', headerName: 'Building', flex: 1, minWidth: 110,
                 valueGetter: (value, row) => row.building?.name ?? buildings[value] ?? value,
             },
             {
-                field: 'assignee_id', headerName: 'Assignee', width: 150,
+                field: 'assignee_id', headerName: 'Assignee', flex: 1, minWidth: 110,
                 valueGetter: (value, row) => row.assignee?.username ?? engineers[value] ?? (value ? `User #${value}` : 'Unassigned'),
             },
-            {field: 'is_escalated', headerName: 'Escalated', width: 100, type: 'boolean'},
+            {field: 'is_escalated', headerName: 'Escalated', width: 96, type: 'boolean'},
             {
-                field: 'created_at', headerName: 'Created', width: 180,
+                // date only to save space, the full timestamp is in the tooltip. still sorts/filters by exact time
+                field: 'created_at', headerName: 'Created', width: 116,
                 type: 'dateTime', valueGetter: (value) => (value ? new Date(value) : null),
-                valueFormatter: (value) => formatDateTime(value),
+                valueFormatter: (value) => formatDate(value),
+                renderCell: ({value, formattedValue}) => <span title={formatDateTime(value)}>{formattedValue}</span>,
             },
         ];
     }, [buildingOptions, engineerOptions]);
@@ -133,6 +151,21 @@ function IncidentsPage() {
             fields={fields}
             permissions={{create: P.INCIDENTS_CREATE, update: P.INCIDENTS_UPDATE, delete: P.INCIDENTS_DELETE}}
             getRowLabel={(row) => `#${row.id} ${row.title}`}
+            listParams={listParams}
+            gridInitialState={{columns: {columnVisibilityModel: compact ? COMPACT_HIDDEN_COLUMNS : {}}}}
+            openRowId={params?.incidentId ?? null}
+            initialCreate={Boolean(params?.create)}
+            filters={(
+                <IncidentFilters
+                    filters={filters}
+                    onChange={setFilters}
+                    buildingOptions={buildingOptions}
+                    floorOptions={floorOptions}
+                    seatOptions={seatOptions}
+                    engineerOptions={engineerOptions}
+                    showAssignee={can(P.ENGINEERS_VIEW)}
+                />
+            )}
             renderFormExtras={(row) => (
                 <>
                     <IncidentHistory incidentId={row.id} currentStatus={row.status} />

@@ -13,6 +13,9 @@ const palettes = {
         background: { default: '#FAF7F0', paper: '#FFFDF8' },
         text: { primary: '#1F2A2E', secondary: '#5B6669' },
         divider: 'rgba(31, 42, 46, 0.12)',
+        // chart series: brand teal/clay pushed to enough chroma to read as color on a chart,
+        // checked for color-blind separation + contrast against this mode's paper
+        chart: { primary: '#0E9488', secondary: '#E0662C' },
     },
     dark: {
         primary: { main: '#5EC4B6', light: '#8FD8CE', dark: '#3A9488', contrastText: '#0E1A1A' },
@@ -20,6 +23,7 @@ const palettes = {
         background: { default: '#121A1C', paper: '#1A2427' },
         text: { primary: '#E6EEEC', secondary: '#9FB0AD' },
         divider: 'rgba(230, 238, 236, 0.12)',
+        chart: { primary: '#2AA898', secondary: '#D96A33' },
     },
 };
 

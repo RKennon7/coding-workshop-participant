@@ -11,6 +11,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
  *  - canAdd/canEdit/canDelete: hide the matching button when the user isn't allowed to use it
  *  - onRowClick: clicking anywhere on a row except the action buttons (defaults to onEdit)
  *  - includes the grid toolbar with quick search + filters
+ *  - toolbar: extra content between the title and the grid (e.g. server-side filters)
  */}
 function DataTable({
     title,
@@ -29,6 +30,7 @@ function DataTable({
     getRowId,
     initialState,
     height = 560,
+    toolbar,
 }) {
     const gridColumns = useMemo(() => {
         if (!canEdit && !canDelete) {
@@ -60,7 +62,7 @@ function DataTable({
 
     return (
         <Stack spacing={2}>
-            <Stack direction="row" alignItems="center" justifyContent="space-between" gap={2}>
+            <Stack direction="row" sx={{alignItems: 'center', justifyContent: 'space-between', gap: 2}}>
                 <Typography variant="h6" component="h2">{title}</Typography>
                 {canAdd && (
                     <Button variant="contained" startIcon={<AddIcon />} onClick={onAdd}>
@@ -68,6 +70,7 @@ function DataTable({
                     </Button>
                 )}
             </Stack>
+            {toolbar}
             {error && <Alert severity="error">{error}</Alert>}
             <Box sx={{height, width: '100%'}}>
                 <DataGrid
